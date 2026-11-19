@@ -1,6 +1,6 @@
 import pytest
 
-from quantlab.execution import (
+from quantlab.p01.execution import (
     DATO_NO_VALIDO,
     EJECUTAR,
     ESPERAR,
@@ -11,7 +11,7 @@ from quantlab.execution import (
     execution_report,
     spread_regime,
 )
-from quantlab.quotes import SYNTHETIC_QUOTE
+from quantlab.p01.quotes import SYNTHETIC_QUOTE
 
 HIST = [0.5, 0.6, 0.6, 0.7, 0.7, 0.7, 0.8, 0.9, 1.0, 1.2]  # mediana 0,7 · p90 1,02
 
@@ -107,3 +107,39 @@ def test_parametros_invalidos(kwargs):
     params = {"quote": SYNTHETIC_QUOTE, "side": "buy", "qty": 0.01, **kwargs}
     with pytest.raises(ValueError):
         execution_report(**params)
+
+
+# --- Con libro completo (P02): VWAP y slippage ------------------------------
+
+from quantlab.p02.orderbook import EXAMPLE_BOOK, normalize_book, simulate_market_order  # noqa: E402
+
+
+def _fills(qty):
+    bids, asks = normalize_book(EXAMPLE_BOOK)
+    return simulate_market_order(bids, asks, "buy", qty)[0], simulate_market_order(bids, asks, "sell", qty)[0]
+
+
+def test_con_libro_usa_vwap_y_slippage():
+    buy, sell = _fills(0.5)
+    r = execution_report(SYNTHETIC_QUOTE, "buy", 0.5, 0, HIST, buy_fill=buy, sell_fill=sell)
+    assert r["uses_book"] and r["exec_price"] == pytest.approx(60_005.4)
+    assert r["slippage_cost"] == pytest.approx(0.5 * 3.4)
+    assert r["levels_used"] == 3
+    # venta de 0,5: 0,2 a 59.998 + 0,3 a 59.995 -> VWAP 59.996,2
+    assert r["round_trip_market"] == pytest.approx(0.5 * (60_005.4 - 59_996.2))
+    assert r["breakeven_move"] == pytest.approx(60_005.4 - 59_996.2)  # sin comisión
+
+
+def test_con_libro_sin_slippage_coincide_con_p01():
+    buy, sell = _fills(0.1)  # cabe en el mejor nivel de ambos lados
+    a = execution_report(SYNTHETIC_QUOTE, "buy", 0.1, 0.008, HIST, buy_fill=buy, sell_fill=sell)
+    b = execution_report(SYNTHETIC_QUOTE, "buy", 0.1, 0.008, HIST)
+    for k in ("exec_price", "round_trip_total", "breakeven_price", "breakeven_move"):
+        assert a[k] == pytest.approx(b[k])
+    assert a["slippage_cost"] == pytest.approx(0, abs=1e-9)
+
+
+def test_con_libro_orden_que_no_cabe():
+    buy, sell = _fills(4)  # ask solo tiene 3,5 BTC
+    r = execution_report(SYNTHETIC_QUOTE, "buy", 4, 0.008, HIST, buy_fill=buy, sell_fill=sell)
+    assert r["verdict"] == PROFUNDIDAD_INSUFICIENTE and r["depth_ok"] is False

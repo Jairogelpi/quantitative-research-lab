@@ -30,7 +30,7 @@ En un mercado tan líquido las **comisiones** (no incluidas) pesan mucho más qu
 
 ## Código en `src/` y pruebas
 
-- Funciones: `src/quantlab/quotes.py` → `quote_metrics`, `round_trip_cost`, `validate_quote`, `fetch_kraken_ticker`, `SYNTHETIC_QUOTE`.
+- Funciones: `src/quantlab/p01/quotes.py` → `quote_metrics`, `round_trip_cost`, `validate_quote`, `fetch_kraken_ticker`, `SYNTHETIC_QUOTE`.
 - Pruebas: `tests/test_quotes.py` (12 sin conexión + 1 en vivo).
 
 ```powershell

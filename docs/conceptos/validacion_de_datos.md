@@ -44,7 +44,7 @@ if market["source"] == "synthetic_example":
 
 ## En `src/` y `tests/`
 
-Las comprobaciones viven en `validate_quote()` (`src/quantlab/quotes.py`). Tanto `quote_metrics()` como `fetch_kraken_ticker()` la llaman, así que un dato inválido lanza `ValueError` automáticamente.
+Las comprobaciones viven en `validate_quote()` (`src/quantlab/p01/quotes.py`). Tanto `quote_metrics()` como `fetch_kraken_ticker()` la llaman, así que un dato inválido lanza `ValueError` automáticamente.
 
 Las pruebas de `tests/test_quotes.py` verifican los casos conocidos y también que los datos inválidos se rechazan:
 

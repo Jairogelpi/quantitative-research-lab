@@ -31,7 +31,7 @@ Mid = (Ask + Bid) / 2
 
 ## Código
 
-En el proyecto: `from quantlab.quotes import fetch_kraken_ticker` → `market = fetch_kraken_ticker()`.
+En el proyecto: `from quantlab.p01.quotes import fetch_kraken_ticker` → `market = fetch_kraken_ticker()`.
 
 Qué hace por dentro (consulta el ticker público de Kraken para BTC/EUR):
 

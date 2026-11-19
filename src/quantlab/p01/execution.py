@@ -12,7 +12,7 @@ from typing import Iterable
 
 import numpy as np
 
-from quantlab.quotes import quote_metrics, validate_quote
+from quantlab.p01.quotes import quote_metrics, validate_quote
 
 # Kraken Pro, nivel 1 (< 2.500 $ en 30 días), orden taker. Consultado el 19-11-2026.
 # Comprueba tu nivel en https://www.kraken.com/pro/fees
@@ -71,10 +71,16 @@ def execution_report(
     fee_rate: float = DEFAULT_FEE_RATE,
     history_spread_bps: Iterable[float] = (),
     min_history: int = DEFAULT_MIN_HISTORY,
+    buy_fill: dict | None = None,
+    sell_fill: dict | None = None,
 ) -> dict:
     """Informe determinista para una orden inmediata de `qty` en el lado `side`.
 
     Mismas entradas -> misma salida. No hace llamadas de red.
+
+    Sin `buy_fill`/`sell_fill` se supone que todo cabe en el mejor nivel (P01): compra al Ask y
+    venta al Bid. Con ellos (resultado de `quantlab.p02.orderbook.simulate_market_order` para
+    `qty` en ambos lados) se usa el VWAP de recorrer el libro, que incluye el slippage (P02).
     """
     if side not in ("buy", "sell"):
         raise ValueError(f"side debe ser 'buy' o 'sell', no {side!r}")
@@ -92,22 +98,47 @@ def execution_report(
     m = quote_metrics(bid, ask, last)
     mid = m["mid_price"]
 
-    exec_price = ask if side == "buy" else bid          # comprar cruza el Ask, vender cruza el Bid
+    use_book = buy_fill is not None and sell_fill is not None
+    entry_fill = buy_fill if side == "buy" else sell_fill
+    if use_book:
+        buy_px, sell_px = buy_fill["execution_price"], sell_fill["execution_price"]  # VWAP de cada lado
+    else:
+        buy_px, sell_px = ask, bid                       # comprar cruza el Ask, vender cruza el Bid
+    exec_price = buy_px if side == "buy" else sell_px
+    exit_price = sell_px if side == "buy" else buy_px    # precio actual para deshacer la posición
+    best = ask if side == "buy" else bid
+
     notional = qty * exec_price
     fee = notional * fee_rate
     spread_cost_vs_mid = qty * m["spread"] / 2           # medio spread por pata
+    slippage_cost = qty * abs(exec_price - best)         # recorrer niveles más allá del mejor (P02)
+    slippage_bps = abs(exec_price / best - 1) * 10_000
     round_trip_spread = qty * m["spread"]
-    round_trip_fees = qty * (ask + bid) * fee_rate       # aproximación: ambas patas a precios actuales
-    be_price = breakeven_price(side, bid, ask, fee_rate)
-    be_move = be_price - bid if side == "buy" else ask - be_price  # cuánto debe moverse a favor
+    round_trip_market = qty * (buy_px - sell_px)         # spread + slippage de ambas patas
+    round_trip_fees = qty * (buy_px + sell_px) * fee_rate
+    # Punto de equilibrio: precio de salida que compensa la entrada y las dos comisiones
+    if side == "buy":
+        be_price = exec_price * (1 + fee_rate) / (1 - fee_rate)
+        be_move = be_price - exit_price
+    else:
+        be_price = exec_price * (1 - fee_rate) / (1 + fee_rate)
+        be_move = exit_price - be_price
 
-    available = quote.get("best_ask_volume" if side == "buy" else "best_bid_volume")
-    depth_ok = None if available is None else qty <= available
+    if use_book:
+        available = entry_fill["filled_btc"]
+        depth_ok = bool(entry_fill["complete"] and (sell_fill if side == "buy" else buy_fill)["complete"])
+    else:
+        available = quote.get("best_ask_volume" if side == "buy" else "best_bid_volume")
+        depth_ok = None if available is None else qty <= available
 
     regime = spread_regime(m["spread_bps"], history_spread_bps, min_history)
-    if depth_ok is False:
+    if depth_ok is False and use_book:
         verdict, reason = PROFUNDIDAD_INSUFICIENTE, (
-            f"{qty} BTC > {available} disponibles al mejor precio: habrá slippage (lección 1.3)")
+            "El snapshot no cubre la orden completa (entrada o salida): el precio parcial "
+            "no vale para toda la orden; pide más niveles o reduce la cantidad")
+    elif depth_ok is False:
+        verdict, reason = PROFUNDIDAD_INSUFICIENTE, (
+            f"{qty} BTC > {available} disponibles al mejor precio: habrá slippage (P02)")
     elif regime["regime"] == SIN_HISTORIAL:
         verdict, reason = SIN_HISTORIAL, (
             f"Solo {regime['n']} observaciones (mínimo {min_history}); coste calculado, sin juicio de spread")
@@ -129,9 +160,14 @@ def execution_report(
         "notional": notional,
         "fee": fee,
         "spread_cost_vs_mid": spread_cost_vs_mid,
+        "slippage_cost": slippage_cost,
+        "slippage_bps": slippage_bps,
+        "levels_used": entry_fill["levels_used"] if use_book else None,
+        "uses_book": use_book,
         "round_trip_spread": round_trip_spread,
+        "round_trip_market": round_trip_market,
         "round_trip_fees": round_trip_fees,
-        "round_trip_total": round_trip_spread + round_trip_fees,
+        "round_trip_total": round_trip_market + round_trip_fees,
         "breakeven_price": be_price,
         "breakeven_move": be_move,
         "breakeven_move_pct": be_move / mid * 100,

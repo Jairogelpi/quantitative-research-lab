@@ -1,6 +1,6 @@
 import pytest
 
-from quantlab.quotes import (
+from quantlab.p01.quotes import (
     SYNTHETIC_QUOTE,
     fetch_kraken_ticker,
     quote_metrics,
@@ -74,7 +74,7 @@ def test_cantidad_no_valida():
 
 @pytest.mark.live
 def test_kraken_quote_con_volumen_real():
-    from quantlab.quotes import fetch_kraken_quote
+    from quantlab.p01.quotes import fetch_kraken_quote
     q = fetch_kraken_quote()
     assert q["best_ask"] >= q["best_bid"] > 0
     assert q["best_bid_volume"] > 0 and q["best_ask_volume"] > 0

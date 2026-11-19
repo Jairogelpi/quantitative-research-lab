@@ -21,5 +21,8 @@ En VS Code instala las extensiones Python y Jupyter, selecciona `.venv` como int
 ## Flujo
 Un solo cuaderno por práctica. Usa Git para sincronizar los cambios entre Colab y local; evita editar simultáneamente dos copias. Los datos grandes quedan fuera de Git. Las funciones probadas se moverán a `src/` y sus pruebas a `tests/` cuando corresponda.
 
+## P02
+Abre `notebooks/01_financial_foundations/P02_order_book.ipynb`. Por defecto usa un libro de referencia; `USE_LIVE_DATA = True` consulta el libro público de Kraken y `LIVE_E5 = True` registra un snapshot en `data/raw/p02_snapshots.csv`. Las funciones están en `src/quantlab/p02/`.
+
 ## P01
 El cuaderno usa por defecto una muestra ficticia determinista para verificar el entorno. Cambia `USE_LIVE_DATA` a `True` para consultar el ticker público de Kraken. La consulta en vivo requiere Internet y no ha sido verificada en este entorno. No envía órdenes. Los ejercicios están intencionadamente pendientes.

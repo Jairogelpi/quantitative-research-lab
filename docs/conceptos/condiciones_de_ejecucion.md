@@ -1,6 +1,6 @@
 # Condiciones de ejecución
 
-**Familia:** costes de ejecución · **Usa conceptos de:** P01 · **Código:** `src/quantlab/execution.py` y `scripts/monitor_ejecucion.py`
+**Familia:** costes de ejecución · **Usa conceptos de:** P01 y P02 · **Código:** `src/quantlab/p01/execution.py` y `scripts/monitor_ejecucion.py`
 
 ## Qué responde y qué no
 
@@ -18,7 +18,7 @@
 | # | Regla | Veredicto |
 |---|---|---|
 | 1 | La cotización no supera la validación (libro cruzado, precio ≤ 0, fallo de red) | ⛔ `DATO_NO_VALIDO` |
-| 2 | La cantidad pedida es mayor que el volumen disponible al mejor precio | ⚠️ `PROFUNDIDAD_INSUFICIENTE` |
+| 2 | El snapshot del libro no cubre la orden completa (entrada o salida) | ⚠️ `PROFUNDIDAD_INSUFICIENTE` |
 | 3 | Hay menos de 10 observaciones de historia | ⏳ `SIN_HISTORIAL` (calcula el coste, pero no juzga el spread) |
 | 4 | Spread actual ≤ mediana de la ventana (5 min) | ✅ `EJECUTAR` |
 | 5 | Mediana < spread ≤ percentil 90 | 🟡 `NORMAL` |
@@ -30,12 +30,13 @@ En las reglas 4 a 6, las diferencias menores de 0,001 bps se consideran iguales.
 
 | Concepto | Compra | Venta |
 |---|---|---|
-| Precio de ejecución | Ask | Bid |
+| Precio de ejecución | VWAP recorriendo los asks (sin libro: Ask) | VWAP recorriendo los bids (sin libro: Bid) |
 | Importe | qty × Ask | qty × Bid |
 | Comisión | importe × f | importe × f |
 | Coste del spread frente al mid | qty × spread / 2 | qty × spread / 2 |
-| Ida y vuelta | qty × spread + qty × (Ask + Bid) × f | ídem |
-| **Punto de equilibrio** | Bid' = Ask × (1 + f) / (1 − f) | Ask' = Bid × (1 − f) / (1 + f) |
+| Slippage (P02) | qty × (VWAP − Ask) | qty × (Bid − VWAP) |
+| Ida y vuelta | qty × (VWAP_compra − VWAP_venta) + qty × (VWAP_compra + VWAP_venta) × f | ídem |
+| **Punto de equilibrio** | P_salida = P_entrada × (1 + f) / (1 − f) | P_salida = P_entrada × (1 − f) / (1 + f) |
 
 `f` es la comisión por pata (por cada operación). El punto de equilibrio es el precio al que habría que cerrar la posición para que, después de pagar el spread y las dos comisiones, el resultado sea cero.
 
@@ -81,7 +82,8 @@ Cada consulta se guarda en `data/raw/kraken_btceur_quotes.csv` (Git no la sube).
 
 ## Limitaciones
 
-- Solo mira el **primer nivel** del libro. Para órdenes que no caben en él hace falta calcular el slippage (lección 1.3).
+- Recorre los `--levels` niveles descargados (100 por defecto, hasta 500). Si la orden no cabe en ellos, no inventa precios: avisa con `PROFUNDIDAD_INSUFICIENTE`.
+- El slippage es el del snapshot: no modela que el libro cambie mientras se ejecuta la orden.
 - La hora es la de **recepción**, no la del evento en el exchange.
 - La mediana y el percentil 90 de 5 minutos son una propuesta inicial, no parámetros optimizados.
 - **No envía órdenes.** Solo consulta APIs públicas.

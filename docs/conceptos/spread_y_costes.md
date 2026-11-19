@@ -48,7 +48,7 @@ Dos consultas con minutos de diferencia dieron **3,0 € (0,52 bps)** y **0,9 �
 
 ## Código
 
-Está en `src/quantlab/quotes.py`; se importa con `from quantlab.quotes import quote_metrics, round_trip_cost`. Versión simplificada:
+Está en `src/quantlab/p01/quotes.py`; se importa con `from quantlab.p01.quotes import quote_metrics, round_trip_cost`. Versión simplificada:
 
 ```python
 def quote_metrics(best_bid: float, best_ask: float, last_price: float) -> dict:
