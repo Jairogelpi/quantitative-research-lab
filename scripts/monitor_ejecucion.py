@@ -1,0 +1,157 @@
+"""Monitor de condiciones de ejecución para BTC/EUR en Kraken (solo lectura, no envía órdenes).
+
+Uso:
+    python scripts/monitor_ejecucion.py --side buy --qty 0.01
+    python scripts/monitor_ejecucion.py --side sell --qty 0.05 --fee-pct 0.40 --interval 10
+    python scripts/monitor_ejecucion.py --side buy --qty 0.01 --iterations 1   # una sola consulta
+
+Cada consulta se guarda en data/raw/kraken_btceur_quotes.csv. Al arrancar se reutiliza
+la historia reciente del CSV, así el veredicto está disponible antes.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import sys
+import time
+from collections import deque
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from quantlab.execution import DEFAULT_MIN_HISTORY, execution_report
+from quantlab.quotes import fetch_kraken_quote, quote_metrics
+
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CSV = ROOT / "data" / "raw" / "kraken_btceur_quotes.csv"
+CSV_FIELDS = ["received_at", "best_bid", "best_ask", "last_price",
+              "best_bid_volume", "best_ask_volume", "spread_bps"]
+
+ICONS = {
+    "EJECUTAR": "✅", "NORMAL": "🟡", "ESPERAR": "🔴",
+    "SIN_HISTORIAL": "⏳", "PROFUNDIDAD_INSUFICIENTE": "⚠️", "DATO_NO_VALIDO": "⛔",
+}
+
+
+def eur(x: float, d: int = 2) -> str:
+    """Formato europeo: 57.961,20 €"""
+    return f"{x:,.{d}f}".replace(",", "X").replace(".", ",").replace("X", ".") + " €"
+
+
+def num(x: float, d: int = 3) -> str:
+    return f"{x:,.{d}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def load_history(path: Path, window: timedelta) -> deque:
+    """(timestamp, spread_bps) del CSV dentro de la ventana."""
+    hist: deque = deque()
+    if not path.exists():
+        return hist
+    cutoff = datetime.now(timezone.utc) - window
+    with path.open(newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            try:
+                ts = datetime.fromisoformat(row["received_at"])
+                if ts >= cutoff:
+                    hist.append((ts, float(row["spread_bps"])))
+            except (KeyError, ValueError):
+                continue  # fila corrupta: se ignora
+    return hist
+
+
+def append_csv(path: Path, quote: dict, spread_bps: float) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    new = not path.exists()
+    with path.open("a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        if new:
+            w.writeheader()
+        w.writerow({**{k: quote.get(k) for k in CSV_FIELDS[:-1]}, "spread_bps": spread_bps})
+
+
+def render(q: dict, r: dict) -> str:
+    side_txt = "COMPRAR" if r["side"] == "buy" else "VENDER"
+    lines = [f"\n{q.get('received_at', '')} · {q.get('symbol', '')} · Kraken"]
+    if r["verdict"] == "DATO_NO_VALIDO":
+        lines.append(f"Veredicto: {ICONS['DATO_NO_VALIDO']} DATO NO VÁLIDO · {r['reason']}")
+        return "\n".join(lines)
+    hist = (f"mediana: {num(r['spread_median_bps'])} bps · p90: {num(r['spread_p90_bps'])} bps "
+            f"(n={r['history_n']})" if r["spread_median_bps"] is not None
+            else f"historial insuficiente (n={r['history_n']})")
+    lado = "Ask" if r["side"] == "buy" else "Bid"
+    direction = "subir" if r["side"] == "buy" else "bajar"
+    depth = ("sin dato" if r["depth_ok"] is None else
+             f"{'✅' if r['depth_ok'] else '⚠️'} {num(r['qty'])} BTC "
+             f"{'≤' if r['depth_ok'] else '>'} {num(r['available_at_best'])} BTC disponibles al {lado}")
+    lines += [
+        f"Bid {eur(q['best_bid'])} · "
+        f"Ask {eur(q['best_ask'])} · Mid {eur(r['mid_price'])}",
+        f"Spread {eur(r['spread'])} ({num(r['spread_bps'])} bps) · {hist}",
+        "",
+        f"Orden: {side_txt} {num(r['qty'])} BTC",
+        f"  Precio de ejecución:  {eur(r['exec_price'])} ({lado})",
+        f"  Importe:              {eur(r['notional'])}",
+        f"  Comisión ({num(r['fee_rate']*100, 2)} %):    {eur(r['fee'])}",
+        f"  Coste spread vs mid:  {eur(r['spread_cost_vs_mid'], 4)}",
+        f"  Ida y vuelta:         {eur(r['round_trip_spread'], 4)} spread + {eur(r['round_trip_fees'])} comisiones"
+        f" = {eur(r['round_trip_total'])}",
+        f"  Punto de equilibrio:  el precio debe {direction} {eur(r['breakeven_move'])} "
+        f"({num(r['breakeven_move_pct'], 2)} %) hasta {eur(r['breakeven_price'])}",
+        f"  Profundidad:          {depth}",
+        "",
+        f"Veredicto: {ICONS[r['verdict']]} {r['verdict']} · {r['reason']}",
+    ]
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")  # emojis en la consola de Windows
+        except AttributeError:
+            pass
+
+    ap = argparse.ArgumentParser(description="Monitor de condiciones de ejecución (Kraken BTC/EUR). No envía órdenes.")
+    ap.add_argument("--side", choices=["buy", "sell"], required=True, help="buy = comprar, sell = vender")
+    ap.add_argument("--qty", type=float, required=True, help="Cantidad en BTC")
+    ap.add_argument("--fee-pct", type=float, default=0.80, help="Comisión por pata en %% (def. 0,80 = Kraken Pro nivel 1 taker)")
+    ap.add_argument("--interval", type=float, default=5, help="Segundos entre consultas (def. 5)")
+    ap.add_argument("--window", type=float, default=300, help="Ventana de historia en segundos (def. 300 = 5 min)")
+    ap.add_argument("--min-history", type=int, default=DEFAULT_MIN_HISTORY, help="Observaciones mínimas para juzgar el spread")
+    ap.add_argument("--iterations", type=int, default=0, help="Número de consultas (0 = sin fin, Ctrl+C para salir)")
+    ap.add_argument("--csv", type=Path, default=DEFAULT_CSV, help="CSV donde se guardan las consultas")
+    args = ap.parse_args(argv)
+
+    window = timedelta(seconds=args.window)
+    history = load_history(args.csv, window)
+    print(f"Historia cargada: {len(history)} observaciones de los últimos {args.window:.0f} s. Ctrl+C para salir.")
+
+    i = 0
+    try:
+        while args.iterations == 0 or i < args.iterations:
+            i += 1
+            now = datetime.now(timezone.utc)
+            while history and history[0][0] < now - window:
+                history.popleft()
+            try:
+                quote = fetch_kraken_quote()
+            except Exception as exc:  # red caída, API con error o dato inválido
+                report = execution_report({}, args.side, args.qty, args.fee_pct / 100)
+                report["reason"] = f"{type(exc).__name__}: {exc}"
+                print(render({"received_at": now.isoformat(), "symbol": "BTC/EUR"}, report))
+            else:
+                report = execution_report(quote, args.side, args.qty, args.fee_pct / 100,
+                                          [s for _, s in history], args.min_history)
+                print(render(quote, report))
+                spread_bps = quote_metrics(quote["best_bid"], quote["best_ask"], quote["last_price"])["spread_bps"]
+                append_csv(args.csv, quote, spread_bps)
+                history.append((datetime.fromisoformat(quote["received_at"]), spread_bps))
+            if args.iterations == 0 or i < args.iterations:
+                time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("\nMonitor detenido.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

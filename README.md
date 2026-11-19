@@ -11,6 +11,7 @@ Desde PowerShell, en la raíz del proyecto:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -e .
 .\.venv\Scripts\python.exe -m ipykernel install --user --name quantlab --display-name "Python (QuantLab)"
 .\.venv\Scripts\python.exe -m jupyterlab
 ```
