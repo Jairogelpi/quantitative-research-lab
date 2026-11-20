@@ -32,6 +32,8 @@ Apuntes de conceptos y conclusiones que vamos sacando en las prácticas, con el 
 | Order flow e impacto: reconstrucción L2, OFI, OBI, respuesta del precio y exposición | [conceptos/order_flow_e_impacto.md](conceptos/order_flow_e_impacto.md) | P13 |
 | Multiactivo y capitalización: divisa, calendarios, CAGR, drawdown y retorno total | [conceptos/multiactivo_y_capitalizacion.md](conceptos/multiactivo_y_capitalizacion.md) | P14 |
 | Regímenes y diversificación: riesgo de cartera, beta y unión point-in-time | [conceptos/regimenes_y_diversificacion.md](conceptos/regimenes_y_diversificacion.md) | P15 |
+| Construcción de factores: scores, carteras long-short, costes y Fama-French | [conceptos/construccion_de_factores.md](conceptos/construccion_de_factores.md) | P16 |
+| Investigación integral: protocolo, rejilla causal, predictibilidad, ejecución y decisión | [conceptos/investigacion_integral.md](conceptos/investigacion_integral.md) | P17 |
 | Condiciones de ejecución (monitor determinista) | [conceptos/condiciones_de_ejecucion.md](conceptos/condiciones_de_ejecucion.md) | P01 + P02 → `scripts/monitor_ejecucion.py` |
 
 ## Conclusiones por práctica
@@ -53,6 +55,8 @@ Apuntes de conceptos y conclusiones que vamos sacando en las prácticas, con el 
 | P13 · Order Flow, Market Impact y exposición | [conclusiones/P13_order_flow_market_impact.md](conclusiones/P13_order_flow_market_impact.md) |
 | P14 · Laboratorio multiactivo y capitalización | [conclusiones/P14_multi_asset_analysis.md](conclusiones/P14_multi_asset_analysis.md) |
 | P15 · Regímenes macroeconómicos y diversificación | [conclusiones/P15_macro_regimes.md](conclusiones/P15_macro_regimes.md) |
+| P16 · Construcción de factores financieros | [conclusiones/P16_factor_construction.md](conclusiones/P16_factor_construction.md) |
+| P17 · Primera investigación cuantitativa integral | [conclusiones/P17_integrated_research.md](conclusiones/P17_integrated_research.md) |
 
 ## Resumen de lo aprendido por práctica
 
@@ -73,6 +77,8 @@ Apuntes de conceptos y conclusiones que vamos sacando en las prácticas, con el 
 | P13 · Order Flow, Market Impact y exposición | [aprendizajes/P13_order_flow_market_impact.md](aprendizajes/P13_order_flow_market_impact.md) |
 | P14 · Laboratorio multiactivo y capitalización | [aprendizajes/P14_multi_asset_analysis.md](aprendizajes/P14_multi_asset_analysis.md) |
 | P15 · Regímenes macroeconómicos y diversificación | [aprendizajes/P15_macro_regimes.md](aprendizajes/P15_macro_regimes.md) |
+| P16 · Construcción de factores financieros | [aprendizajes/P16_factor_construction.md](aprendizajes/P16_factor_construction.md) |
+| P17 · Primera investigación cuantitativa integral | [aprendizajes/P17_integrated_research.md](aprendizajes/P17_integrated_research.md) |
 
 ## Convención de colores en los cuadernos
 
