@@ -22,6 +22,8 @@ La primera propuesta (un informe mensual de inversión en 7 fases) se contrastó
 
 El problema no es que no se puedan incorporar, sino que **generar un informe mensual no obliga a usarlos todos**. Por eso el proyecto se organiza alrededor de preguntas de investigación, no de una aplicación concreta.
 
+**Actualización (20-11-2026):** las dos lecciones sin aplicación completa ya tienen práctica: 1.22 en P10 (DCF y sensibilidad) y 1.30 en P16 (laboratorio de payoffs, swap y basis, E6).
+
 ## Fases del módulo 1 · Fundamentos financieros
 
 | Fase | Pregunta real que queremos resolver | Prácticas |
@@ -32,7 +34,7 @@ El problema no es que no se puedan incorporar, sino que **generar un informe men
 | 4. Comportamiento histórico | ¿Cómo se comportan los precios a lo largo del tiempo? | P04 |
 | 5. Predicción | ¿Existe información en los datos pasados sobre movimientos futuros? | P05 |
 | 6. Mercados interconectados | ¿Qué exchange incorpora antes la información? ¿Hay discrepancias aprovechables? | P06, P17 |
-| 7. Derivados | ¿Qué información adicional proporcionan y cómo podemos utilizarlos? | P07 |
+| 7. Derivados | ¿Qué información adicional proporcionan y cómo podemos utilizarlos? | P07, P16 (§10 y E6) |
 | 8. Economía de la ejecución | ¿Cuánto cuesta convertir una señal en una operación? | P08 |
 | 9. Rentabilidad y riesgo | ¿Cuánto podemos ganar y cuánto podemos perder? | P09 |
 | 10. Economía y valoración | ¿Qué factores económicos explican el comportamiento de los activos? | P10, P14 |
@@ -41,12 +43,14 @@ El problema no es que no se puedan incorporar, sino que **generar un informe men
 
 P17 se usa también al final, como **investigación integradora** de todas las fases.
 
-Para cerrar los huecos de la auditoría se añaden ejercicios explícitos en su fase:
+Los huecos de la auditoría inicial ya tienen ejercicios explícitos:
 
-- **Capitalización** (1.28) → fase 10.
-- **Valoración fundamental** (1.22) → fase 10.
-- **Opciones, futuros y swaps** (1.30) → fase 7.
-- **Long, short y exposición** (1.27) → fases 7 y 12.
+| Lección | Fase | Dónde se trabaja |
+|---|---|---|
+| **Capitalización** (1.28) | 10 | P14 (E1–E3: composición, tipos equivalentes y CAGR) |
+| **Valoración fundamental** (1.22) | 10 | P10 (DCF, valor terminal y sensibilidad) |
+| **Opciones, futuros y swaps** (1.30) | 7 | P16 (§10: payoffs, swap y basis; E6) |
+| **Long, short y exposición** (1.27) | 3, 7, 11 y 12 | P07 (posiciones en perpetuos), P13 (exposición neta y bruta), P16 (carteras long-short) |
 
 ## Método: cómo aprendemos cada concepto
 
@@ -106,11 +110,26 @@ Leyenda: `—` pendiente · `🟡` en curso · `✅` conseguido.
 | 1.24 | Eficiencia del mercado | 11 | — | — | — | — | — |
 | 1.25 | Alpha y Beta | 11 | — | — | — | — | — |
 | 1.26 | Factores financieros | 11 | — | — | — | — | — |
-| 1.27 | Long, Short y exposición | 7, 12 | — | — | — | — | — |
+| 1.27 | Long, Short y exposición | 3, 7, 11, 12 | — | — | — | — | — |
 | 1.28 | Capitalización | 10 | — | — | — | — | — |
 | 1.29 | Diversificación | 12 | — | — | — | — | — |
 | 1.30 | Opciones, futuros y swaps | 7 | — | — | — | — | — |
 | 1.31 | Price Discovery | 6 | — | — | — | — | — |
+
+### Conceptos transversales
+
+No son lecciones del módulo 1, pero aparecen en las prácticas y sin ellos los resultados no se pueden interpretar. Siguen el mismo registro.
+
+| Código | Concepto | Dónde se trabaja | Comprendido | Programado | Investigado con datos reales | Aplicado | Evaluado |
+|---|---|---|---|---|---|---|---|
+| T1 | Validación de datos, point-in-time, look-ahead y vintages | P01–P04, P10, P15, P17 | — | — | — | — | — |
+| T2 | Perpetuos: funding, basis, open interest, margen y liquidaciones | P07 | — | — | — | — | — |
+| T3 | Bonos, curva de tipos, inflación y eventos macro | P10, P15 | — | — | — | — | — |
+| T4 | Riesgo de divisa | P14 | — | — | — | — | — |
+| T5 | Regímenes y correlaciones condicionales | P15 | — | — | — | — | — |
+| T6 | Rotación, coste de equilibrio y capacidad | P08, P16 | — | — | — | — | — |
+| T7 | Inferencia: IC, errores HAC, Ljung-Box, pruebas múltiples (Bonferroni, BH), Fisher z, bootstrap por bloques y null circular | P05, P11–P17 | — | — | — | — | — |
+| T8 | Método de investigación: protocolo previo, corte cronológico, R² fuera de muestra y decisión estadística frente a económica | P05, P11, P16, P17 | — | — | — | — | — |
 
 ## QuantLab a largo plazo
 
