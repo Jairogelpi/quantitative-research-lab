@@ -15,9 +15,9 @@
 | 6 | Ampliar la banda nunca reduce la profundidad. Si la banda llega al borde del snapshot, la cifra es solo un mínimo. | E4 · `depth_within_bps` | [Libro de órdenes](../conceptos/libro_de_ordenes.md) |
 | 7 | Un spread mínimo (0,1 €) no garantiza una ejecución barata: el mejor nivel podía tener tan poco volumen que 0,05 BTC ya recorría 2 niveles. | E2 y E5 | [Spread y costes](../conceptos/spread_y_costes.md) |
 | 8 | El microprice casi coincide con el mid cuando el spread es de 1 tick (+0,05 € en Kraken). | `book_features` | [Libro de órdenes](../conceptos/libro_de_ordenes.md) |
-| 9 | Aun con slippage, la comisión (0,80 % por pata) sigue dominando: comprar 0,5 BTC tuvo 0,22 € de slippage frente a 231,60 € de comisión. | `scripts/monitor_ejecucion.py` | [Condiciones de ejecución](../conceptos/condiciones_de_ejecucion.md) |
+| 9 | Aun con slippage, la comisión (0,80 % por pata) sigue dominando: comprar 0,5 BTC tuvo 1,40 € de slippage (0,48 bps) frente a 231,52 € de comisión (snapshot de las 09:28 UTC). | E5 | [Condiciones de ejecución](../conceptos/condiciones_de_ejecucion.md) |
 
-## E5 · Kraken frente a la referencia (09:28 UTC, 100 niveles)
+## E5 · Kraken frente a la referencia (09:28 UTC, 50 niveles por lado)
 
 | Métrica | Referencia | Kraken |
 |---|---|---|

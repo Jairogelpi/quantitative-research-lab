@@ -13,7 +13,7 @@
 | 4 | Con un 15 % nominal y un 10 % de inflación, la aproximación da un 5 % real y la fórmula exacta, un 4,55 %. | E4 · `fisher_comparison` | [Valoración y macro](../conceptos/valoracion_y_macro.md) |
 | 5 | El estudio de eventos detecta el efecto programado: +45,6 bps tras sorpresas inferiores y −44,6 bps tras sorpresas superiores a 1 h (desarrollo). | `align_events` · `surprise_groups` | [Valoración y macro](../conceptos/valoracion_y_macro.md) |
 | 6 | En validación, el grupo "Inferior" mantiene el signo (+39,3 bps, 3 eventos) y no hay ningún evento "Superior". | `development_horizons` · E6 | [Valoración y macro](../conceptos/valoracion_y_macro.md) |
-| 7 | El efecto se ve mejor a 1 hora: la correlación sorpresa–retorno es −0,82 a 1 h y −0,39 a 24 h, porque el ruido posterior lo tapa. | E6 | [Valoración y macro](../conceptos/valoracion_y_macro.md) |
+| 7 | El efecto se ve mejor a 1 hora: la correlación sorpresa–retorno es −0,81 a 1 h y −0,39 a 24 h, porque el ruido posterior lo tapa. | E6 | [Valoración y macro](../conceptos/valoracion_y_macro.md) |
 | 8 | FRED no tiene IPC ni paro de octubre de 2025. Calculando por posición, la inflación de noviembre sale 2,99 %; por fecha, 2,70 %. | E7 · `yoy_by_date` | [Series temporales](../conceptos/series_temporales.md) |
 | 9 | La curva real 10 − 2 años estuvo invertida el 54,2 % de los días de 2022–2025, con un mínimo de −108 bps (3 de julio de 2023). | E7 · `fred_indicators` | [Valoración y macro](../conceptos/valoracion_y_macro.md) |
 | 10 | Sin consenso archivado ni hora de publicación (100 % ausentes en FRED), el estudio real no se puede hacer: evidencia insuficiente. | E8 · `availability_report` | [Validación](../conceptos/validacion_de_datos.md) |

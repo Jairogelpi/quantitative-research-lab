@@ -3,7 +3,7 @@
 **Cuaderno:** `notebooks/01_financial_foundations/P12_factor_analysis.ipynb`
 **Datos de ejemplo:** dos estrategias sintéticas con exposiciones conocidas, un universo ficticio de 6 activos y una regla real sobre BTC/EUR
 
-P09 medía cuánto gana una estrategia; P12 pregunta **por qué** gana. ¿Es habilidad (alpha) o simplemente exposición al mercado y a factores conocidos (beta)? Es la última práctica de fundamentos y cierra el círculo: una "ventaja" solo cuenta si sobrevive a los factores, a la validación fuera de muestra y a los costes.
+P09 medía cuánto gana una estrategia; P12 pregunta **por qué** gana. ¿Es habilidad (alpha) o simplemente exposición al mercado y a factores conocidos (beta)? Cierra el bloque principal de fundamentos (P13–P15 lo amplían) y cierra el círculo: una "ventaja" solo cuenta si sobrevive a los factores, a la validación fuera de muestra y a los costes.
 
 ## 1. Variables de entrada
 

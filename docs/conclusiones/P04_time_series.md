@@ -15,7 +15,7 @@
 | 6 | El objetivo futuro siempre es posterior, mide exactamente h velas y nunca cruza huecos. Se conocen 84, 80 y 76 objetivos para h = 1, 3 y 5. | E5 · `target_alignment` | [Series temporales](../conceptos/series_temporales.md) |
 | 7 | La escala de la volatilidad depende de la frecuencia: 0,91 bps por vela de 5 s frente a 5,62 bps por vela de 5 min (simulación). | `compare_frequencies` | [Series temporales](../conceptos/series_temporales.md) |
 | 8 | En Kraken, 1 minuto es la resolución razonable: con 5 s, el 43 % de las velas estaba vacío; con 5 min solo había 10 retornos. | E6 | [Series temporales](../conceptos/series_temporales.md) |
-| 9 | El mercado real fue unas 4 veces más volátil que la simulación en reposo: 8,24 frente a 1,88 bps por minuto (mediana, N = 10). | E6 | [Series temporales](../conceptos/series_temporales.md) |
+| 9 | El mercado real fue unas 4 veces más volátil que la simulación: 8,24 frente a 2,02 bps por minuto (mediana de toda la serie, N = 10). | E6 | [Series temporales](../conceptos/series_temporales.md) |
 | 10 | Una consulta REST da muy pocos datos: 46 filas completas de investigación. Hace falta una captura continua y más larga. | E6 | [Series temporales](../conceptos/series_temporales.md) |
 
 ## E6 · Kraken frente a la simulación (recepción 18:53:47 UTC)
@@ -27,7 +27,7 @@
 | Velas de 1 min / vacías | 90 / 2 | 61 / 0 |
 | Retornos válidos | 84 | 58 |
 | Desv. típica de retornos de 1 min | 3,10 bps | 8,64 bps |
-| Volatilidad móvil mediana (N = 10) | 1,88 bps | 8,24 bps |
+| Volatilidad móvil mediana (N = 10) | 2,02 bps | 8,24 bps |
 | Filas completas de investigación | 60 | 46 |
 
 | Frecuencia (Kraken) | Velas | Vacías | Retornos válidos | Desv. típica por vela |

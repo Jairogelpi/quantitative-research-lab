@@ -15,7 +15,7 @@
 | 6 | Agregar el OFI en ventanas de 5 y 15 s mantiene la relación contemporánea (R² 0,70 y 0,66), que se conoce al mismo tiempo que el cambio. | E3 · `window_ofi` | [Order flow](../conceptos/order_flow_e_impacto.md) |
 | 7 | En el laboratorio de impacto, el efecto crece con el tamaño y revierte un 71–73 % a los 30 s. | E5 · `impact_by_quartile` | [Order flow](../conceptos/order_flow_e_impacto.md) |
 | 8 | Una cobertura spot + perpetuo tiene exposición neta de −10 € y bruta de 12.610 € (apalancamiento bruto 1,8). | `exposure` · E6 | [Derivados perpetuos](../conceptos/derivados_perpetuos.md) |
-| 9 | En Kraken, el 56 % de las cotizaciones REST no cambia nada entre consultas: el OFI entre snapshots es solo una aproximación. | E7 | [Validación](../conceptos/validacion_de_datos.md) |
+| 9 | En Kraken, el 56 % de las cotizaciones REST tiene OFI nulo (el mejor nivel no cambia entre consultas): el OFI entre snapshots es solo una aproximación. | E7 | [Validación](../conceptos/validacion_de_datos.md) |
 | 10 | En Kraken hay relación contemporánea (R² 0,50–0,56) y ninguna predictiva (p = 0,76 y 0,32): evidencia insuficiente. | E7 | [Order flow](../conceptos/order_flow_e_impacto.md) |
 
 ## Regresiones (simulación)

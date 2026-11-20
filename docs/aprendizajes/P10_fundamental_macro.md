@@ -33,7 +33,7 @@ Hasta P09 todo giraba alrededor del precio y sus movimientos. P10 se pregunta qu
 | Inflación interanual | IPC_t / IPC_{mismo mes, año anterior} − 1 | Enero de 2023: **6,33 %** | ¿Cuánto subieron los precios en un año? |
 | Rentabilidad real | (1 + n) / (1 + π) − 1 | 1,15 / 1,10 − 1 = **4,55 %** | ¿Cuánto se gana de verdad? |
 | Pendiente de la curva | (10 años − 2 años) × 100 | Mínimo real: **−108 bps** | ¿Está invertida la curva? |
-| Sorpresa | dato − consenso | 3,26 − 3,11 = **+0,15 pp** | ¿Qué no esperaba el mercado? |
+| Sorpresa | dato − consenso | 3,256 − 3,107 = **+0,149 pp** (bajo el umbral de 0,15: «En línea») | ¿Qué no esperaba el mercado? |
 | Reacción | precio(t + h) / precio(antes de t) − 1 | "Inferior" a 1 h: **+45,6 bps** | ¿Cómo reaccionó el precio? |
 
 ## 3. Reglas de validación (antes de calcular)

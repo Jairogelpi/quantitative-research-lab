@@ -85,7 +85,7 @@ P04 construía series fiables con un objetivo futuro. P05 hace la primera **inve
 - Que una señal "funcione" en BTC/EUR con 12 horas de datos: la conclusión correcta es **evidencia insuficiente**.
 - La significancia estadística de un IC: los objetivos se solapan y no son independientes.
 - Que un z-score bajo signifique un precio barato: solo compara el precio con su propio pasado.
-- Que una dependencia estadística sea explotable: la simulación tiene autocorrelación de ±0,40 y ninguna señal la aprovecha, por el retraso de entrada.
+- Que una dependencia estadística sea explotable: la simulación tiene autocorrelación de +0,40 y −0,36 y ninguna señal la aprovecha, por el retraso de entrada.
 - El resultado real de operar: no se modelan spread dinámico, llenados, slippage, impacto ni fiscalidad.
 - Que unos resultados sintéticos digan algo sobre Bitcoin.
 
