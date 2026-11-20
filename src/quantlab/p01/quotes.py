@@ -6,6 +6,7 @@ y validacion_de_datos.md.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 
 import requests
@@ -25,11 +26,18 @@ SYNTHETIC_QUOTE = {
 
 
 def validate_quote(best_bid: float, best_ask: float, last_price: float | None = None) -> None:
-    """Lanza ValueError si la cotización no tiene sentido (precios <= 0 o libro cruzado)."""
+    """Lanza ValueError si la cotización no tiene sentido.
+
+    Precios no finitos (NaN, ±inf) o <= 0, y libro cruzado o bloqueado (bid >= ask). Es la misma regla
+    que `quantlab.p02.orderbook.normalize_book`.
+    """
+    values = [best_bid, best_ask] + ([] if last_price is None else [last_price])
+    if not all(math.isfinite(v) for v in values):
+        raise ValueError(f"Precio no finito: bid {best_bid}, ask {best_ask}, last {last_price}")
     if best_bid <= 0:
         raise ValueError(f"Bid no válido: {best_bid}")
-    if best_ask < best_bid:
-        raise ValueError(f"Libro cruzado: ask {best_ask} < bid {best_bid}")
+    if best_ask <= best_bid:
+        raise ValueError(f"Libro cruzado o bloqueado: ask {best_ask} <= bid {best_bid}")
     if last_price is not None and last_price <= 0:
         raise ValueError(f"Last price no válido: {last_price}")
 

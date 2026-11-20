@@ -10,6 +10,7 @@ Apuntes de conceptos y conclusiones que vamos sacando en las prácticas, con el 
 | `../src/quantlab/pNN/` | Código de cada práctica (`p01/`, `p02/`…), con sus pruebas en `../tests/`. |
 | `conclusiones/` | Lo que aprendimos en cada práctica (una nota por cuaderno). |
 | `aprendizajes/` | Resumen didáctico por práctica: variables, cómo se calcula cada métrica, conclusiones deterministas y para qué sirve. |
+| `proyecto/` | Plan del proyecto QuantLab: objetivo, fases, método de aprendizaje y registro de competencias ([QUANTLAB.md](proyecto/QUANTLAB.md)). |
 
 ## Conceptos
 

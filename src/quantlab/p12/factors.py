@@ -236,12 +236,17 @@ def annualized_attribution(attr_bps: pd.DataFrame, periods: int = 365) -> pd.Dat
 def daily_rule_returns(close: pd.Series, lookback: int = 20, round_trip_bps: float = 20.) -> pd.DataFrame:
     """E7 · Regla long/cash diaria: invertido el día t si el momentum de `lookback` días al cierre de t − 1 es positivo.
 
-    La posición se decide con datos hasta ayer. El coste es la mitad del de ida y vuelta en cada cambio de posición.
+    La posición se decide con datos hasta ayer. El coste es la mitad del de ida y vuelta en cada cambio de posición,
+    incluida la entrada inicial si la regla empieza invertida (se parte de liquidez).
     """
     r = close.pct_change(fill_method=None)
     momentum = close / close.shift(lookback) - 1
     position = (momentum.shift(1) > 0).astype(float).where(momentum.shift(1).notna())
-    trades = position.diff().abs()
+    previous = position.shift(1)
+    first = position.first_valid_index()
+    if first is not None:
+        previous.loc[first] = 0.  # solo la primera decisión parte de liquidez; un hueco posterior no se rellena
+    trades = (position - previous).abs()
     strategy = position * r - trades * round_trip_bps / 2 / 1e4
     out = pd.DataFrame({"strategy": strategy, "benchmark_return": r, "position": position})
     return out.dropna()

@@ -39,10 +39,12 @@ def test_coste_ida_y_vuelta_es_cantidad_por_spread():
     assert round_trip_cost(100.0, 101.5, 3) == pytest.approx(3 * 1.5)
 
 
-def test_spread_cero_no_tiene_coste():
-    m = quote_metrics(100.0, 100.0, 100.0)
-    assert m["spread"] == 0
-    assert round_trip_cost(100.0, 100.0, 1) == 0
+def test_libro_bloqueado_se_rechaza():
+    # bid == ask: libro bloqueado, misma regla que P02 (normalize_book)
+    with pytest.raises(ValueError):
+        quote_metrics(100.0, 100.0, 100.0)
+    with pytest.raises(ValueError):
+        round_trip_cost(100.0, 100.0, 1)
 
 
 # --- Validación ---------------------------------------------------------------
@@ -58,6 +60,10 @@ def test_cotizacion_valida_no_lanza():
         (-5.0, 1.0, 1.0),     # bid negativo
         (101.0, 100.0, 100),  # libro cruzado
         (100.0, 101.0, 0.0),  # last = 0
+        (float("nan"), float("nan"), float("nan")),  # NaN
+        (100.0, float("nan"), 100.0),  # ask ausente
+        (100.0, float("inf"), 100.0),  # ask infinito
+        (100.0, 101.0, float("nan")),  # last NaN
     ],
 )
 def test_cotizaciones_invalidas(bid, ask, last):

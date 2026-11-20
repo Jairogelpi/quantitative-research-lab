@@ -16,7 +16,7 @@ Hasta P09 todo giraba alrededor del precio y sus movimientos. P10 se pregunta qu
 | `face`, `coupon_rate`, `yield_rate`, `years` | Nominal, cupón, rendimiento exigido y vencimiento del bono | 1.000 €, 4 %, 5 %, 5 años |
 | `cpi` | Índice de precios mensual | CPIAUCSL (FRED) |
 | `yield_2y_pct`, `yield_10y_pct` | Rendimientos del Tesoro | DGS2, DGS10 (FRED) |
-| `available_at` | Hora real de publicación del dato | 13:30 UTC |
+| `available_at` | Hora real de publicación del dato, en UTC | IPC de EE. UU.: 8:30 de Nueva York = 13:30 UTC en invierno y 12:30 UTC en horario de verano |
 | `consensus_pct`, `actual_pct` | Previsión y dato publicado | 3,1 % y 3,26 % |
 | `THRESHOLD_PP` | Umbral de sorpresa, fijado antes de mirar | 0,15 pp |
 

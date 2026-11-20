@@ -10,9 +10,10 @@ Antes de calcular métricas comprobamos que el dato tiene sentido. Si una compro
 
 | Comprobación | Por qué | Si falla, probablemente… |
 |---|---|---|
+| Precios finitos | `NaN` o infinito no es un precio; cualquier cálculo posterior saldría `NaN` sin avisar. | Campo ausente o respuesta incompleta. |
 | `best_bid > 0` | Un precio ≤ 0 no existe en un activo como BTC. | Dato corrupto o campo vacío. |
 | `last_price > 0` | Ídem. | Dato corrupto o campo vacío. |
-| `best_ask >= best_bid` | Si Ask < Bid, el libro está **cruzado**: comprador y vendedor ya se habrían cruzado y la operación se habría ejecutado. | Datos desincronizados, mezcla de fuentes o error de lectura. |
+| `best_ask > best_bid` | Si Ask < Bid, el libro está **cruzado**: comprador y vendedor ya se habrían cruzado y la operación se habría ejecutado. Si Ask = Bid, está **bloqueado**: en un exchange continuo también se habrían cruzado. | Datos desincronizados, mezcla de fuentes o error de lectura. |
 
 ## Ideas clave
 

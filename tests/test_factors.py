@@ -181,6 +181,10 @@ def test_e7_regla_diaria_sin_mirar_el_futuro():
     out = daily_rule_returns(close, 5, 20.)
     mom = close / close.shift(5) - 1
     assert (out.position == (mom.shift(1).loc[out.index] > 0).astype(float)).all()
+    # La primera decisión parte de liquidez: si empieza invertida, paga la entrada.
+    first = out.iloc[0]
+    assert first.position == 1
+    assert np.isclose(first.strategy, first.benchmark_return - .001)
     switch = out.index[out.position.diff().abs() == 1][0]
     assert np.isclose(out.loc[switch, "strategy"],
                       out.loc[switch, "position"] * out.loc[switch, "benchmark_return"] - .001)
