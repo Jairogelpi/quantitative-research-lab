@@ -7,12 +7,15 @@ Conceptos:
 - Lote (batch): las filas se acumulan y se escriben juntas, para no crear un fichero por foto.
 - Error registrado, no ocultado: si un exchange falla o su cotización es imposible, se guarda el error y se
   sigue; nunca se inventa el dato.
+- Desequilibrio por ronda: imbalance de cada libro en bandas de bps alrededor del mid
+  (`mercado.desequilibrio`), para estudiar después si anticipa el movimiento del precio.
 - Conclusión por ronda: con las cotizaciones válidas de la ronda se calcula la comparación de costes
   (`mercado.comparar_costes`) y se guardan sus hechos, para consultarlos después con SQL.
 - UTC: todas las horas en tiempo universal.
 
 Fuentes que escribe en el almacén: `cotizaciones`, `comparaciones` (una fila por exchange y ronda),
-`conclusiones` (una fila por ronda) y `errores_captura`.
+`conclusiones` (una fila por ronda), `desequilibrios` (una fila por exchange, banda y ronda) y
+`errores_captura`.
 """
 
 from __future__ import annotations
@@ -26,10 +29,11 @@ import pandas as pd
 from radar.almacen.puertos import Almacen
 from radar.captura.puertos import FuenteCotizaciones
 from radar.configuracion import INTERVALO_S, NIVELES_LIBRO, PAR, TAM_LOTE
-from radar.mercado import Cotizacion, Libro, Nivel, comparar_costes
+from radar.mercado import Cotizacion, Libro, Nivel, comparar_costes, desequilibrio
 
 FUENTE_COTIZACIONES, FUENTE_ERRORES = "cotizaciones", "errores_captura"
 FUENTE_COMPARACIONES, FUENTE_CONCLUSIONES = "comparaciones", "conclusiones"
+FUENTE_DESEQUILIBRIOS = "desequilibrios"
 
 
 def ahora_utc() -> pd.Timestamp:
@@ -64,11 +68,14 @@ def ronda(fuentes, numero: int, hilos: ThreadPoolExecutor, reloj=ahora_utc,
     return libros, errores
 
 
-def filas_de_ronda(numero: int, libros, errores, importe_eur=None, comisiones=None) -> dict:
+def filas_de_ronda(numero: int, libros, errores, importe_eur=None, comisiones=None, bandas_bps=()) -> dict:
     """Filas por fuente de una ronda: el mejor nivel de cada libro y, si se pasan importe y comisiones, la
-    comparación de costes barriendo los libros."""
+    comparación de costes barriendo los libros; con `bandas_bps`, el desequilibrio de cada libro en cada banda."""
     filas = {FUENTE_COTIZACIONES: [{"ronda": numero, **l.mejor_nivel().a_fila()} for l in libros],
              FUENTE_ERRORES: errores}
+    if bandas_bps and libros:
+        filas[FUENTE_DESEQUILIBRIOS] = [{"ronda": numero, "exchange": l.exchange, "recibido_utc": l.recibido_utc,
+                                         **desequilibrio(l, b).a_fila()} for l in libros for b in bandas_bps]
     if importe_eur and comisiones and libros:
         comparacion = comparar_costes(libros, importe_eur, comisiones)
         filas[FUENTE_COMPARACIONES] = [{"ronda": numero, **f} for f in comparacion.a_filas()]
@@ -78,7 +85,7 @@ def filas_de_ronda(numero: int, libros, errores, importe_eur=None, comisiones=No
 
 def capturar(fuentes, almacen: Almacen, segundos: float, intervalo: float = INTERVALO_S,
              tam_lote: int = TAM_LOTE, importe_eur: float | None = None, comisiones: dict | None = None,
-             niveles: int = NIVELES_LIBRO, reloj=ahora_utc, dormir=time.sleep, monotonic=time.monotonic) -> dict:
+             niveles: int = NIVELES_LIBRO, bandas_bps=(), reloj=ahora_utc, dormir=time.sleep, monotonic=time.monotonic) -> dict:
     """Una ronda cada `intervalo` segundos durante `segundos`; guarda en lotes. Devuelve un resumen."""
     lotes: dict[str, list] = {}
     rondas, n_errores, fin = 0, 0, monotonic() + segundos
@@ -92,7 +99,7 @@ def capturar(fuentes, almacen: Almacen, segundos: float, intervalo: float = INTE
         while monotonic() < fin:
             inicio = monotonic()
             libros, errores = ronda(fuentes, rondas, hilos, reloj, niveles)
-            for fuente, filas in filas_de_ronda(rondas, libros, errores, importe_eur, comisiones).items():
+            for fuente, filas in filas_de_ronda(rondas, libros, errores, importe_eur, comisiones, bandas_bps).items():
                 lotes.setdefault(fuente, []).extend(filas)
             n_errores += len(errores)
             rondas += 1

@@ -2,6 +2,7 @@
 
     python -m radar capturar [segundos] [--exchanges kraken,okx,bitvavo] [--importe 1000] [--niveles 50] [--sin-comparar]
     python -m radar costes [--importe 1000] [--niveles 50]
+    python -m radar analizar [--horizonte 1] [--minimo 200]
     python -m radar catalogo
     python -m radar consultar "SELECT exchange, median(spread_bps) FROM cotizaciones GROUP BY exchange"
 """
@@ -14,10 +15,11 @@ import sys
 import pandas as pd
 
 from radar.almacen import LakeParquet
+from radar.analisis import estudiar_imbalance, pares_imbalance_retorno
 from radar.captura.capturador import capturar, foto_libro
 from radar.captura.exchanges import crear_fuentes
-from radar.configuracion import (CATALOGO, COMISIONES_TAKER, EXCHANGES, IMPORTE_COMPARACION, NIVELES_LIBRO,
-                                 comisiones_taker)
+from radar.configuracion import (BANDAS_BPS, CATALOGO, COMISIONES_TAKER, EXCHANGES, IMPORTE_COMPARACION,
+                                 NIVELES_LIBRO, comisiones_taker)
 from radar.mercado import comparar_costes
 
 
@@ -26,7 +28,7 @@ def cmd_capturar(args):
     print(f"Capturando {', '.join(f.nombre for f in fuentes)} durante {args.segundos:.0f} s…")
     importe = None if args.sin_comparar else args.importe
     resumen = capturar(fuentes, LakeParquet(), args.segundos, importe_eur=importe, comisiones=comisiones_taker(),
-                       niveles=args.niveles)
+                       niveles=args.niveles, bandas_bps=BANDAS_BPS)
     print(f"Terminado: {resumen['rondas']} rondas, {resumen['errores']} errores.")
 
 
@@ -48,6 +50,13 @@ def cmd_costes(args):
         print(f"  - {frase}")
 
 
+def cmd_analizar(args):
+    pares = pares_imbalance_retorno(LakeParquet().consultar, args.horizonte)
+    print(f"¿Anticipa el imbalance el mid dentro de {args.horizonte} ronda(s)? {len(pares)} pares imbalance → retorno.")
+    for r in estudiar_imbalance(pares, args.minimo):
+        print(f"  - {r.conclusion()}")
+
+
 def cmd_catalogo(args):
     print(f"Vistas: {LakeParquet().crear_catalogo()} → {CATALOGO}")
 
@@ -59,6 +68,7 @@ def cmd_consultar(args):
 
 def main(argv=None):
     sys.stdout.reconfigure(encoding="utf-8")  # € y tildes en la consola de Windows
+    sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(prog="python -m radar", description="Radar · QuantLab observa el mercado")
     sub = parser.add_subparsers(dest="comando", required=True)
     p = sub.add_parser("capturar", help="Captura rondas de cotizaciones y las guarda en el lake")
@@ -73,6 +83,10 @@ def main(argv=None):
     p.add_argument("--exchanges", default=",".join(EXCHANGES))
     p.add_argument("--niveles", type=int, default=NIVELES_LIBRO, help="Niveles del libro por lado")
     p.set_defaults(func=cmd_costes)
+    p = sub.add_parser("analizar", help="Estudia si el desequilibrio del libro anticipa el movimiento del mid")
+    p.add_argument("--horizonte", type=int, default=1, help="Rondas hacia delante del retorno futuro")
+    p.add_argument("--minimo", type=int, default=200, help="Rondas mínimas por grupo para concluir")
+    p.set_defaults(func=cmd_analizar)
     sub.add_parser("catalogo", help="Crea data/quantlab.duckdb para DBeaver").set_defaults(func=cmd_catalogo)
     p = sub.add_parser("consultar", help="Ejecuta SQL sobre el lake")
     p.add_argument("sql")
@@ -80,6 +94,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if getattr(args, "segundos", 1) <= 0:
         parser.error("los segundos deben ser positivos")
+    if getattr(args, "horizonte", 1) < 1 or getattr(args, "minimo", 2) < 2:
+        parser.error("el horizonte debe ser al menos 1 y el mínimo al menos 2")
     if getattr(args, "niveles", 1) < 1:
         parser.error("los niveles deben ser al menos 1")
     args.func(args)

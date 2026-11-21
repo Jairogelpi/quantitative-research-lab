@@ -116,6 +116,10 @@ def test_filas_de_ronda_con_y_sin_comparacion():
     con = filas_de_ronda(3, libros, errores, 1000, {"kraken": 0.008})
     assert con[FUENTE_COMPARACIONES][0]["exchange"] == "kraken" and con[FUENTE_COMPARACIONES][0]["ronda"] == 3
     assert con[FUENTE_CONCLUSIONES][0]["mas_barato_ejecutable"] == "kraken"
+    from radar.captura.capturador import FUENTE_DESEQUILIBRIOS
+    filas = filas_de_ronda(3, libros, errores, bandas_bps=(1, 5))[FUENTE_DESEQUILIBRIOS]
+    assert [(f["exchange"], f["banda_bps"], f["ronda"]) for f in filas] == [("kraken", 1, 3), ("kraken", 5, 3)]
+    assert FUENTE_DESEQUILIBRIOS not in sin  # sin bandas, no se calcula
 
 
 def test_capturar_guarda_en_lotes():
