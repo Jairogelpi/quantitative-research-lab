@@ -66,6 +66,24 @@ class Libro:
         return Cotizacion(self.exchange, self.par, bid.precio, ask.precio, bid.cantidad, ask.cantidad,
                           self.solicitado_utc, self.recibido_utc, self.hora_exchange_utc)
 
+    def a_fila(self, niveles: int) -> dict:
+        """Fila para el almacén (fuente `libros`): los primeros `niveles` de cada lado como listas paralelas de
+        precios y cantidades. Una fila por foto, en vez de una por nivel: mucho más compacto."""
+        bids, asks = self.bids[:niveles], self.asks[:niveles]
+        return {"exchange": self.exchange, "par": self.par, "solicitado_utc": self.solicitado_utc,
+                "recibido_utc": self.recibido_utc, "hora_exchange_utc": self.hora_exchange_utc,
+                "bid_precios": [n.precio for n in bids], "bid_cantidades": [n.cantidad for n in bids],
+                "ask_precios": [n.precio for n in asks], "ask_cantidades": [n.cantidad for n in asks]}
+
+    @classmethod
+    def desde_fila(cls, fila) -> "Libro":
+        """Reconstruye (y vuelve a validar) un libro guardado con `a_fila`: lo que usa la simulación."""
+        hora = fila.get("hora_exchange_utc")
+        return cls(fila["exchange"], fila["par"],
+                   tuple(Nivel(p, c) for p, c in zip(fila["bid_precios"], fila["bid_cantidades"])),
+                   tuple(Nivel(p, c) for p, c in zip(fila["ask_precios"], fila["ask_cantidades"])),
+                   fila["solicitado_utc"], fila["recibido_utc"], None if pd.isna(hora) else hora)
+
 
 @dataclass(frozen=True)
 class Ejecucion:

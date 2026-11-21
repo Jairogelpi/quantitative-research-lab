@@ -14,8 +14,8 @@ Conceptos:
 - UTC: todas las horas en tiempo universal.
 
 Fuentes que escribe en el almacén: `cotizaciones`, `comparaciones` (una fila por exchange y ronda),
-`conclusiones` (una fila por ronda), `desequilibrios` (una fila por exchange, banda y ronda) y
-`errores_captura`.
+`conclusiones` (una fila por ronda), `desequilibrios` (una fila por exchange, banda y ronda), `libros`
+(una fila por exchange y ronda, con los niveles como listas) y `errores_captura`.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from radar.mercado import Cotizacion, Libro, Nivel, comparar_costes, desequilibr
 
 FUENTE_COTIZACIONES, FUENTE_ERRORES = "cotizaciones", "errores_captura"
 FUENTE_COMPARACIONES, FUENTE_CONCLUSIONES = "comparaciones", "conclusiones"
-FUENTE_DESEQUILIBRIOS = "desequilibrios"
+FUENTE_DESEQUILIBRIOS, FUENTE_LIBROS = "desequilibrios", "libros"
 
 
 def ahora_utc() -> pd.Timestamp:
@@ -68,11 +68,15 @@ def ronda(fuentes, numero: int, hilos: ThreadPoolExecutor, reloj=ahora_utc,
     return libros, errores
 
 
-def filas_de_ronda(numero: int, libros, errores, importe_eur=None, comisiones=None, bandas_bps=()) -> dict:
+def filas_de_ronda(numero: int, libros, errores, importe_eur=None, comisiones=None, bandas_bps=(),
+                   niveles_guardados: int = 0) -> dict:
     """Filas por fuente de una ronda: el mejor nivel de cada libro y, si se pasan importe y comisiones, la
-    comparación de costes barriendo los libros; con `bandas_bps`, el desequilibrio de cada libro en cada banda."""
+    comparación de costes barriendo los libros; con `bandas_bps`, el desequilibrio de cada libro en cada banda;
+    con `niveles_guardados`, el propio libro (esos niveles por lado) para simular ejecuciones después."""
     filas = {FUENTE_COTIZACIONES: [{"ronda": numero, **l.mejor_nivel().a_fila()} for l in libros],
              FUENTE_ERRORES: errores}
+    if niveles_guardados and libros:
+        filas[FUENTE_LIBROS] = [{"ronda": numero, **l.a_fila(niveles_guardados)} for l in libros]
     if bandas_bps and libros:
         filas[FUENTE_DESEQUILIBRIOS] = [{"ronda": numero, "exchange": l.exchange, "recibido_utc": l.recibido_utc,
                                          **desequilibrio(l, b).a_fila()} for l in libros for b in bandas_bps]
@@ -85,7 +89,7 @@ def filas_de_ronda(numero: int, libros, errores, importe_eur=None, comisiones=No
 
 def capturar(fuentes, almacen: Almacen, segundos: float, intervalo: float = INTERVALO_S,
              tam_lote: int = TAM_LOTE, importe_eur: float | None = None, comisiones: dict | None = None,
-             niveles: int = NIVELES_LIBRO, bandas_bps=(), reloj=ahora_utc, dormir=time.sleep, monotonic=time.monotonic) -> dict:
+             niveles: int = NIVELES_LIBRO, bandas_bps=(), niveles_guardados: int = 0, reloj=ahora_utc, dormir=time.sleep, monotonic=time.monotonic) -> dict:
     """Una ronda cada `intervalo` segundos durante `segundos`; guarda en lotes. Devuelve un resumen."""
     lotes: dict[str, list] = {}
     rondas, n_errores, fin = 0, 0, monotonic() + segundos
@@ -99,7 +103,8 @@ def capturar(fuentes, almacen: Almacen, segundos: float, intervalo: float = INTE
         while monotonic() < fin:
             inicio = monotonic()
             libros, errores = ronda(fuentes, rondas, hilos, reloj, niveles)
-            for fuente, filas in filas_de_ronda(rondas, libros, errores, importe_eur, comisiones, bandas_bps).items():
+            for fuente, filas in filas_de_ronda(rondas, libros, errores, importe_eur, comisiones, bandas_bps,
+                                                   niveles_guardados).items():
                 lotes.setdefault(fuente, []).extend(filas)
             n_errores += len(errores)
             rondas += 1

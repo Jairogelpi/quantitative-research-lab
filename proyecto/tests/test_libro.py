@@ -66,3 +66,16 @@ def test_barrido_rechaza_cantidades_no_positivas():
         barrer_compra(libro(), 0)
     with pytest.raises(ValueError):
         barrer_venta(libro(), -1)
+
+
+def test_libro_a_fila_y_de_vuelta_desde_el_lake(tmp_path):
+    from radar.almacen import LakeParquet
+    original = libro()
+    fila = original.a_fila(niveles=2)  # solo los 2 primeros niveles de cada lado
+    assert fila["bid_precios"] == [60000, 59990] and fila["ask_cantidades"] == [0.01, 0.02]
+    lake = LakeParquet(tmp_path)
+    lake.guardar([fila], "libros")
+    leida = lake.consultar("SELECT * FROM libros").iloc[0]
+    reconstruido = Libro.desde_fila(leida)
+    assert reconstruido.asks == original.asks[:2] and reconstruido.bids == original.bids[:2]
+    assert reconstruido.exchange == "okx" and reconstruido.recibido_utc == T1

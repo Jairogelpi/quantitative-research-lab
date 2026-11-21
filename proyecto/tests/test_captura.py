@@ -144,3 +144,12 @@ def test_capturar_guarda_comparaciones_y_conclusiones():
         por_fuente.setdefault(fuente, []).extend(filas)
     n = len(por_fuente[FUENTE_COTIZACIONES])
     assert len(por_fuente[FUENTE_COMPARACIONES]) == n and len(por_fuente[FUENTE_CONCLUSIONES]) == n
+
+
+def test_filas_de_ronda_guarda_los_libros_si_se_pide():
+    from radar.captura.capturador import FUENTE_LIBROS, filas_de_ronda
+    with ThreadPoolExecutor(3) as hilos:
+        libros, errores = ronda(FUENTES, 4, hilos, reloj_falso())
+    assert FUENTE_LIBROS not in filas_de_ronda(4, libros, errores)
+    filas = filas_de_ronda(4, libros, errores, niveles_guardados=50)[FUENTE_LIBROS]
+    assert [(f["exchange"], f["ronda"], f["bid_precios"]) for f in filas] == [("kraken", 4, [60000.0])]

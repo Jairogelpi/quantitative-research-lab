@@ -9,6 +9,10 @@ from radar.__main__ import main  # falla si __main__.py no compila
     ["analizar", "--precio", "last"],
     ["capturar", "0"],
     ["costes", "--niveles", "0"],
+    ["simular", "--trozos", "0"],
+    ["simular", "--impactos", "-1"],
+    ["simular", "--exchange", "binance"],
+    ["simular", "--urgencias", "-1"],
 ])
 def test_opciones_invalidas_se_rechazan(argumentos):
     with pytest.raises(SystemExit) as salida:

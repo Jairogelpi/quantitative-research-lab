@@ -11,6 +11,7 @@ TAM_LOTE = 180          # filas por fichero Parquet (60 rondas × 3 exchanges)
 TIMEOUT_HTTP_S = 10     # espera máxima por respuesta
 NIVELES_LIBRO = 100     # niveles por lado (21-11-2026: 50 niveles cubrían solo 8,7 bps de bids en Kraken)
 BANDAS_BPS = (1, 5, 10)  # bandas alrededor del mid para el desequilibrio del libro
+NIVELES_GUARDADOS = 50  # niveles por lado que se guardan en `libros` (200.000 € barrían 25 en Kraken)
 
 # Comisiones taker por pata (fracción del importe) del nivel más bajo, con su fuente oficial.
 # Verificadas el 21-11-2026 en las webs oficiales (renderizadas en un navegador).

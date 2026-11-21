@@ -1,8 +1,11 @@
 """Línea de comandos del radar (desde la carpeta `proyecto/`):
 
-    python -m radar capturar [segundos] [--exchanges kraken,okx,bitvavo] [--importe 1000] [--niveles 50] [--sin-comparar]
-    python -m radar costes [--importe 1000] [--niveles 50]
+    python -m radar capturar [segundos] [--exchanges kraken,okx,bitvavo] [--importe 1000] [--niveles 100]
+                             [--guardar-niveles 50] [--sin-comparar]
+    python -m radar costes [--importe 1000] [--niveles 100]
     python -m radar analizar [--horizontes 1,5,10,30] [--minimo 200] [--precio mid|microprice] [--no-guardar]
+    python -m radar simular [--exchange kraken] [--importe 100000] [--trozos 20] [--duracion 600]
+                            [--impactos 0,1,5] [--urgencias 1,3] [--no-guardar]
     python -m radar catalogo
     python -m radar consultar "SELECT exchange, median(spread_bps) FROM cotizaciones GROUP BY exchange"
 """
@@ -20,7 +23,9 @@ from radar.analisis import (FUENTE_ESTUDIOS, HORIZONTES, PRECIOS, estudiar_imbal
 from radar.captura.capturador import capturar, foto_libro
 from radar.captura.exchanges import crear_fuentes
 from radar.configuracion import (BANDAS_BPS, CATALOGO, COMISIONES_TAKER, EXCHANGES, IMPORTE_COMPARACION,
-                                 NIVELES_LIBRO, comisiones_taker)
+                                 NIVELES_GUARDADOS, NIVELES_LIBRO, comisiones_taker)
+from radar.ejecucion import (FUENTE_SIMULACIONES, aversion_implicita, cargar_libros, comparar_estrategias,
+                             comparar_texto, estimar_impacto_temporal, estimar_volatilidad)
 from radar.mercado import comparar_costes
 
 
@@ -29,7 +34,7 @@ def cmd_capturar(args):
     print(f"Capturando {', '.join(f.nombre for f in fuentes)} durante {args.segundos:.0f} s…")
     importe = None if args.sin_comparar else args.importe
     resumen = capturar(fuentes, LakeParquet(), args.segundos, importe_eur=importe, comisiones=comisiones_taker(),
-                       niveles=args.niveles, bandas_bps=BANDAS_BPS)
+                       niveles=args.niveles, bandas_bps=BANDAS_BPS, niveles_guardados=args.guardar_niveles)
     print(f"Terminado: {resumen['rondas']} rondas, {resumen['errores']} errores.")
 
 
@@ -82,6 +87,31 @@ def cmd_analizar(args):
               f"'revalidaciones'.")
 
 
+def cmd_simular(args):
+    lake = LakeParquet()
+    libros = cargar_libros(lake.consultar, args.exchange)
+    print(f"{args.exchange}: {len(libros)} libros guardados. Compra de {args.importe:,.0f} € todo de golpe frente a "
+          f"TWAP en {args.trozos} trozos durante {args.duracion:g} s.")
+    if libros:
+        sigma2, k = estimar_volatilidad(libros), estimar_impacto_temporal(libros[::60])  # una foto por minuto basta
+        print(f"Parámetros medidos: σ² = {sigma2:.3f} €²/s (σ = {sigma2 ** 0.5:.2f} € por √s), slippage de golpe "
+              f"k = {k:.2f} € por BTC y por BTC.")
+        for u in args.urgencias:
+            print(f"  Almgren-Chriss κT={u:g}: aversión al riesgo implícita λ = "
+                  f"{aversion_implicita(u, args.duracion, args.trozos, sigma2, k):.2e} por €.")
+    resumenes = comparar_estrategias(libros, args.importe, args.trozos, args.duracion,
+                                     comisiones_taker()[args.exchange], args.impactos, urgencias=args.urgencias)
+    for r in resumenes:
+        print(f"  - {r.conclusion()}")
+    for frase in comparar_texto(resumenes):
+        print(f"  → {frase}")
+    if not args.no_guardar and resumenes:
+        ahora = pd.Timestamp.now(tz="UTC")
+        lake.guardar([{"ejecutado_utc": ahora, "recibido_utc": ahora, **r.a_fila()} for r in resumenes],
+                     FUENTE_SIMULACIONES)
+        print(f"Guardado en el lake: {len(resumenes)} resúmenes en '{FUENTE_SIMULACIONES}'.")
+
+
 def cmd_catalogo(args):
     print(f"Vistas: {LakeParquet().crear_catalogo()} → {CATALOGO}")
 
@@ -101,6 +131,8 @@ def main(argv=None):
     p.add_argument("--exchanges", default=",".join(EXCHANGES))
     p.add_argument("--importe", type=float, default=IMPORTE_COMPARACION, help="EUR de la comparación por ronda")
     p.add_argument("--niveles", type=int, default=NIVELES_LIBRO, help="Niveles del libro por lado")
+    p.add_argument("--guardar-niveles", type=int, default=NIVELES_GUARDADOS,
+                   help="Niveles por lado del libro que se guardan (0 = no guardar libros)")
     p.add_argument("--sin-comparar", action="store_true", help="No guardar comparaciones ni conclusiones")
     p.set_defaults(func=cmd_capturar)
     p = sub.add_parser("costes", help="Coste de una ida y vuelta barriendo el libro y punto de equilibrio, con datos de ahora")
@@ -115,6 +147,17 @@ def main(argv=None):
     p.add_argument("--precio", choices=sorted(PRECIOS), default="mid", help="Precio de referencia del retorno")
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar el estudio en el lake")
     p.set_defaults(func=cmd_analizar)
+    p = sub.add_parser("simular", help="Simula una compra grande todo de golpe frente a TWAP sobre los libros guardados")
+    p.add_argument("--exchange", choices=EXCHANGES, default="kraken")
+    p.add_argument("--importe", type=float, default=100_000, help="EUR a comprar")
+    p.add_argument("--trozos", type=int, default=20, help="Trozos del TWAP")
+    p.add_argument("--duracion", type=float, default=600, help="Segundos que dura el TWAP (y cada ventana)")
+    p.add_argument("--impactos", type=lambda t: tuple(float(x) for x in t.split(",")), default=(0.0, 1.0, 5.0),
+                   help="Impacto permanente supuesto, en bps por cada 100.000 € ejecutados, separados por comas")
+    p.add_argument("--urgencias", type=lambda t: tuple(float(x) for x in t.split(",")), default=(1.0, 3.0),
+                   help="Urgencias κT de Almgren-Chriss, separadas por comas (0 = TWAP)")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_simular)
     sub.add_parser("catalogo", help="Crea data/quantlab.duckdb para DBeaver").set_defaults(func=cmd_catalogo)
     p = sub.add_parser("consultar", help="Ejecuta SQL sobre el lake")
     p.add_argument("sql")
@@ -124,8 +167,13 @@ def main(argv=None):
         parser.error("los segundos deben ser positivos")
     if min(getattr(args, "horizontes", (1,))) < 1 or getattr(args, "minimo", 2) < 2:
         parser.error("los horizontes deben ser al menos 1 y el mínimo al menos 2")
+    if getattr(args, "guardar_niveles", 0) < 0:
+        parser.error("los niveles guardados no pueden ser negativos")
     if getattr(args, "niveles", 1) < 1:
         parser.error("los niveles deben ser al menos 1")
+    if args.comando == "simular" and (args.importe <= 0 or args.trozos < 1 or args.duracion <= 0
+                                      or min(args.impactos) < 0 or min(args.urgencias) < 0):
+        parser.error("importe y duración positivos, al menos 1 trozo, e impactos y urgencias no negativos")
     args.func(args)
 
 
