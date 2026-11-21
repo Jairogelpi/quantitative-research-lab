@@ -115,10 +115,17 @@ Reúne todo lo documentado en `docs/`: los conceptos de cada fase, dónde están
 ### Fase 8 · Economía de la ejecución
 
 - **Lecciones:** 1.8 Market Impact · 1.19 Costes operativos.
-- **Conceptos:** comisión maker y taker · coste de spread, de profundidad y de retraso · implementation shortfall · ida y vuelta · umbral de equilibrio exacto · markout · rotación · coste de equilibrio de una estrategia · atribución de costes por tramos.
+- **Conceptos:** comisión maker y taker · coste de spread, de profundidad y de retraso · implementation shortfall · ida y vuelta · umbral de equilibrio exacto · markout · rotación · coste de equilibrio de una estrategia · atribución de costes por tramos · dilema impacto frente a riesgo de timing · algoritmos de ejecución.
+- **Algoritmos de ejecución (escalera, cada uno comparado con el anterior sobre los mismos datos):**
+  1. **TWAP:** la orden se reparte en trozos iguales a intervalos fijos. Referencia simple.
+  2. **Almgren-Chriss (2001):** trayectoria óptima que equilibra el impacto de mercado y la varianza del precio durante la ejecución, según la aversión al riesgo. Sigue siendo el modelo de referencia de la ejecución óptima.
+  3. **Almgren-Chriss adaptativo con señales:** la velocidad de ejecución se ajusta con el desequilibrio del libro de la Fase 2 (acelerar cuando el precio tiende a moverse en contra, frenar cuando tiende a favor). Es la línea que sigue la investigación actual: estrategias que mejoran Almgren-Chriss explotando señales del mercado.
+  - Medida común: implementation shortfall frente al mid de decisión, con su media y su dispersión.
+  - Requisito de datos: simular el slippage de cada trozo exige guardar los niveles del libro en el lake (hoy solo se guarda el mejor nivel).
 - **Documentos:** [costes de ejecución](../conceptos/costes_de_ejecucion.md) · [conclusiones P08](../conclusiones/P08_transaction_costs.md) · [aprendizajes P08](../aprendizajes/P08_transaction_costs.md).
-- **Ya sabemos:** con 10 bps por lado, el mid tiene que subir 21,67 bps solo para empatar una ida y vuelta. En Kraken, una ida y vuelta de 0,01 BTC costaría unos 20 bps, casi todo comisión.
-- **Abierto:** comisiones verificadas de OKX (su tabla oficial no se pudo leer); órdenes maker y su riesgo de no ejecutarse.
+- **Ya sabemos:** con 10 bps por lado, el mid tiene que subir 21,67 bps solo para empatar una ida y vuelta. En Kraken, una ida y vuelta de 0,01 BTC costaría unos 20 bps, casi todo comisión. Comisiones taker verificadas el 21-11-2026 en sus webs oficiales: Kraken 0,80 %, OKX 0,20 % con cuenta solo spot (0,10 % con spot y derivados), Bitvavo 0,25 %. Slippage de una compra a mercado en Kraken (21-11-2026): 0,87 € con 50.000 € y 11,44 € con 100.000 €; crece más rápido que el importe.
+- **Abierto:** órdenes maker y su riesgo de no ejecutarse; ejecución con reinforcement learning (investigación activa en 2025–2026, con mejoras sobre Almgren-Chriss cuando sus supuestos no se cumplen, pero sin un ganador claro y con mucho riesgo de sobreajuste).
+- **Fuentes de los algoritmos:** Almgren y Chriss (2001), *Optimal execution of portfolio transactions* · [RL para ejecución óptima en tiempo continuo dentro del modelo Almgren-Chriss (Finance and Stochastics, 2026)](https://link.springer.com/content/pdf/10.1007/s00780-026-00589-5.pdf) · [Ejecución óptima con RL y movimiento browniano fraccional (arXiv 2611.11373)](https://arxiv.org/abs/2611.11373) · [Optimal Execution Using Reinforcement Learning (arXiv 2306.17178)](https://arxiv.org/pdf/2306.17178).
 
 ### Fase 9 · Rentabilidad y riesgo
 
