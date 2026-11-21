@@ -2,7 +2,7 @@
 
     python -m radar capturar [segundos] [--exchanges kraken,okx,bitvavo] [--importe 1000] [--niveles 50] [--sin-comparar]
     python -m radar costes [--importe 1000] [--niveles 50]
-    python -m radar analizar [--horizontes 1,5,10,30] [--minimo 200] [--no-guardar]
+    python -m radar analizar [--horizontes 1,5,10,30] [--minimo 200] [--precio mid|microprice] [--no-guardar]
     python -m radar catalogo
     python -m radar consultar "SELECT exchange, median(spread_bps) FROM cotizaciones GROUP BY exchange"
 """
@@ -15,7 +15,8 @@ import sys
 import pandas as pd
 
 from radar.almacen import LakeParquet
-from radar.analisis import HORIZONTES, estudiar_imbalance, guardar_estudio, pares_imbalance_retorno
+from radar.analisis import (FUENTE_ESTUDIOS, HORIZONTES, PRECIOS, estudiar_imbalance, evaluar_calidad, guardar_estudio,
+                            guardar_revalidaciones, leer_ultimo_estudio, pares_imbalance_retorno, revalidar)
 from radar.captura.capturador import capturar, foto_libro
 from radar.captura.exchanges import crear_fuentes
 from radar.configuracion import (BANDAS_BPS, CATALOGO, COMISIONES_TAKER, EXCHANGES, IMPORTE_COMPARACION,
@@ -52,16 +53,33 @@ def cmd_costes(args):
 
 def cmd_analizar(args):
     lake = LakeParquet()
-    pares = pares_imbalance_retorno(lake.consultar, args.horizontes)
+    fuentes = lake.fuentes()
+    # El estudio anterior se lee ANTES de guardar el nuevo: sus hallazgos se revalidan con datos posteriores.
+    anterior = leer_ultimo_estudio(lake.consultar, metodo=None) if FUENTE_ESTUDIOS in fuentes else None
+    calidad = evaluar_calidad(lake.consultar, fuentes)
+    print("Calidad de los datos:")
+    for c in calidad.values():
+        print(f"  - {c.exchange}: {c.rondas} rondas, huecos {c.fraccion_huecos:.1%}, errores {c.fraccion_errores:.1%}, "
+              f"latencia p99 {c.latencia_p99_s:.2f} s → {'pasa' if c.pasa else 'NO pasa (' + c.motivo + ')'}")
+    pares = pares_imbalance_retorno(lake.consultar, args.horizontes, precio=args.precio)
     # Equilibrio taker solo por comisiones: cota inferior (sin spread ni slippage), así "no rentable" es seguro.
     equilibrio = {ex: ((1 + c) / (1 - c) - 1) * 10_000 for ex, c in comisiones_taker().items()}
-    resultados = estudiar_imbalance(pares, args.minimo, equilibrio)
-    print(f"¿Anticipa el imbalance el mid? {len(pares)} pares imbalance → retorno, horizontes {list(args.horizontes)}.")
+    resultados = estudiar_imbalance(pares, args.minimo, equilibrio, calidad, args.precio)
+    print(f"\n¿Anticipa el imbalance el {args.precio}? {len(pares)} pares imbalance → retorno, "
+          f"horizontes {list(args.horizontes)}.")
     for r in resultados:
         print(f"  - {r.conclusion()}")
+    revalidaciones = revalidar(pares, anterior, args.minimo) if anterior is not None else []
+    if revalidaciones:
+        print("\nRevalidación de los hallazgos confirmados del estudio anterior, con datos posteriores:")
+        for r in revalidaciones:
+            print(f"  - {r.conclusion()}")
     if not args.no_guardar:
-        guardar_estudio(resultados, lake, pd.Timestamp.now(tz="UTC"))
-        print(f"Guardado en el lake: {len(resultados)} resultados en la fuente 'estudios'.")
+        ahora = pd.Timestamp.now(tz="UTC")
+        guardar_estudio(resultados, lake, ahora)
+        guardar_revalidaciones(revalidaciones, lake, ahora)
+        print(f"\nGuardado en el lake: {len(resultados)} resultados en 'estudios' y {len(revalidaciones)} en "
+              f"'revalidaciones'.")
 
 
 def cmd_catalogo(args):
@@ -94,6 +112,7 @@ def main(argv=None):
     p.add_argument("--horizontes", type=lambda t: tuple(int(x) for x in t.split(",")), default=HORIZONTES,
                    help="Rondas hacia delante del retorno futuro, separadas por comas")
     p.add_argument("--minimo", type=int, default=200, help="Rondas mínimas por grupo y mitad para concluir")
+    p.add_argument("--precio", choices=sorted(PRECIOS), default="mid", help="Precio de referencia del retorno")
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar el estudio en el lake")
     p.set_defaults(func=cmd_analizar)
     sub.add_parser("catalogo", help="Crea data/quantlab.duckdb para DBeaver").set_defaults(func=cmd_catalogo)

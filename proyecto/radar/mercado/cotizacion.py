@@ -6,6 +6,7 @@ Conceptos:
 - Ask (mejor precio de venta, "offer"): la orden de venta MÁS BAJA; lo mínimo que pagas si compras ya.
 - Profundidad del mejor nivel: cantidad (BTC) que espera en el bid y en el ask.
 - Mid price: (bid + ask) / 2. Spread absoluto: ask − bid (EUR). Spread relativo: spread / mid × 10.000 (bps).
+- Microprice: mid ponderado por las cantidades del mejor nivel; se acerca al lado con menos cantidad.
 - Tick (tick size): salto mínimo de precio de cada exchange (Kraken 0,1 €; Bitvavo 1 €).
 - Validación (quote validation): precios y cantidades finitos y > 0, y ask > bid.
 - Libro cruzado (crossed book): ask ≤ bid. Imposible en un mercado real (el motor de emparejamiento lo
@@ -55,6 +56,12 @@ class Cotizacion:
     def mid(self) -> float:
         """Mid price: punto medio entre bid y ask."""
         return (self.bid + self.ask) / 2
+
+    @property
+    def microprice(self) -> float:
+        """Microprice: mid ponderado por las cantidades del mejor nivel. Se acerca al lado con MENOS cantidad
+        (el que se agotará antes): (bid · cantidad_ask + ask · cantidad_bid) / (cantidad_bid + cantidad_ask)."""
+        return (self.bid * self.cantidad_ask + self.ask * self.cantidad_bid) / (self.cantidad_bid + self.cantidad_ask)
 
     @property
     def spread_eur(self) -> float:

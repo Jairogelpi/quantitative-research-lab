@@ -1,0 +1,16 @@
+import pytest
+
+from radar.__main__ import main  # falla si __main__.py no compila
+
+
+@pytest.mark.parametrize("argumentos", [
+    ["analizar", "--horizontes", "0"],
+    ["analizar", "--minimo", "1"],
+    ["analizar", "--precio", "last"],
+    ["capturar", "0"],
+    ["costes", "--niveles", "0"],
+])
+def test_opciones_invalidas_se_rechazan(argumentos):
+    with pytest.raises(SystemExit) as salida:
+        main(argumentos)
+    assert salida.value.code == 2

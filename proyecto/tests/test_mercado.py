@@ -18,6 +18,11 @@ def test_calculos_de_la_cotizacion():
     assert c.latencia_s == pytest.approx(0.25)
 
 
+def test_microprice_se_acerca_al_lado_con_menos_cantidad():
+    assert cot("60000", "60004", cb="3", ca="1").microprice == pytest.approx(60003)  # mucho bid: el ask caerá antes
+    assert cot("60000", "60004", cb="1", ca="1").microprice == pytest.approx(60002)  # equilibrado: el mid
+
+
 def test_spread_redondeado_a_centimos():
     assert cot("53666.1", "53666.4").spread_eur == 0.3  # sin el resto de coma flotante 0.30000000000291
 
