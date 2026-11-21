@@ -2,7 +2,7 @@
 
     python -m radar capturar [segundos] [--exchanges kraken,okx,bitvavo] [--importe 1000] [--niveles 50] [--sin-comparar]
     python -m radar costes [--importe 1000] [--niveles 50]
-    python -m radar analizar [--horizonte 1] [--minimo 200]
+    python -m radar analizar [--horizontes 1,5,10,30] [--minimo 200] [--no-guardar]
     python -m radar catalogo
     python -m radar consultar "SELECT exchange, median(spread_bps) FROM cotizaciones GROUP BY exchange"
 """
@@ -15,7 +15,7 @@ import sys
 import pandas as pd
 
 from radar.almacen import LakeParquet
-from radar.analisis import estudiar_imbalance, pares_imbalance_retorno
+from radar.analisis import HORIZONTES, estudiar_imbalance, guardar_estudio, pares_imbalance_retorno
 from radar.captura.capturador import capturar, foto_libro
 from radar.captura.exchanges import crear_fuentes
 from radar.configuracion import (BANDAS_BPS, CATALOGO, COMISIONES_TAKER, EXCHANGES, IMPORTE_COMPARACION,
@@ -51,10 +51,17 @@ def cmd_costes(args):
 
 
 def cmd_analizar(args):
-    pares = pares_imbalance_retorno(LakeParquet().consultar, args.horizonte)
-    print(f"¿Anticipa el imbalance el mid dentro de {args.horizonte} ronda(s)? {len(pares)} pares imbalance → retorno.")
-    for r in estudiar_imbalance(pares, args.minimo):
+    lake = LakeParquet()
+    pares = pares_imbalance_retorno(lake.consultar, args.horizontes)
+    # Equilibrio taker solo por comisiones: cota inferior (sin spread ni slippage), así "no rentable" es seguro.
+    equilibrio = {ex: ((1 + c) / (1 - c) - 1) * 10_000 for ex, c in comisiones_taker().items()}
+    resultados = estudiar_imbalance(pares, args.minimo, equilibrio)
+    print(f"¿Anticipa el imbalance el mid? {len(pares)} pares imbalance → retorno, horizontes {list(args.horizontes)}.")
+    for r in resultados:
         print(f"  - {r.conclusion()}")
+    if not args.no_guardar:
+        guardar_estudio(resultados, lake, pd.Timestamp.now(tz="UTC"))
+        print(f"Guardado en el lake: {len(resultados)} resultados en la fuente 'estudios'.")
 
 
 def cmd_catalogo(args):
@@ -84,8 +91,10 @@ def main(argv=None):
     p.add_argument("--niveles", type=int, default=NIVELES_LIBRO, help="Niveles del libro por lado")
     p.set_defaults(func=cmd_costes)
     p = sub.add_parser("analizar", help="Estudia si el desequilibrio del libro anticipa el movimiento del mid")
-    p.add_argument("--horizonte", type=int, default=1, help="Rondas hacia delante del retorno futuro")
-    p.add_argument("--minimo", type=int, default=200, help="Rondas mínimas por grupo para concluir")
+    p.add_argument("--horizontes", type=lambda t: tuple(int(x) for x in t.split(",")), default=HORIZONTES,
+                   help="Rondas hacia delante del retorno futuro, separadas por comas")
+    p.add_argument("--minimo", type=int, default=200, help="Rondas mínimas por grupo y mitad para concluir")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar el estudio en el lake")
     p.set_defaults(func=cmd_analizar)
     sub.add_parser("catalogo", help="Crea data/quantlab.duckdb para DBeaver").set_defaults(func=cmd_catalogo)
     p = sub.add_parser("consultar", help="Ejecuta SQL sobre el lake")
@@ -94,8 +103,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if getattr(args, "segundos", 1) <= 0:
         parser.error("los segundos deben ser positivos")
-    if getattr(args, "horizonte", 1) < 1 or getattr(args, "minimo", 2) < 2:
-        parser.error("el horizonte debe ser al menos 1 y el mínimo al menos 2")
+    if min(getattr(args, "horizontes", (1,))) < 1 or getattr(args, "minimo", 2) < 2:
+        parser.error("los horizontes deben ser al menos 1 y el mínimo al menos 2")
     if getattr(args, "niveles", 1) < 1:
         parser.error("los niveles deben ser al menos 1")
     args.func(args)
