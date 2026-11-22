@@ -11,3 +11,4 @@ pyarrow
 pytest
 yfinance
 duckdb
+websockets>=13

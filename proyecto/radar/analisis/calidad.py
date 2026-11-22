@@ -72,7 +72,10 @@ def evaluar_calidad(consultar: Callable[[str], pd.DataFrame], fuentes, intervalo
         FROM s GROUP BY exchange""")
     errores = {}
     if "errores_captura" in fuentes:
-        errores = dict(consultar("SELECT exchange, count(*) AS n FROM errores_captura GROUP BY exchange")
-                       .itertuples(index=False))
+        # Solo los errores de la captura REST: los del websocket (origen "flujo") no dicen nada de estas rondas.
+        filas = consultar("SELECT * FROM errores_captura")
+        if "origen" in filas.columns:
+            filas = filas[filas["origen"].isna()]
+        errores = filas.groupby("exchange").size().to_dict()
     return {f.exchange: Calidad(f.exchange, int(f.rondas), int(f.huecos), int(errores.get(f.exchange, 0)),
                                 float(f.latencia_p99_s)) for f in cotizaciones.itertuples(index=False)}

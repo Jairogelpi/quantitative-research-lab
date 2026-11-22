@@ -193,3 +193,17 @@ def test_evaluar_calidad_desde_el_lake(tmp_path):
     sin_errores.guardar([{"exchange": "okx", "recibido_utc": T0, "latencia_s": 5.0}], "cotizaciones")
     c = evaluar_calidad(sin_errores.consultar, sin_errores.fuentes())["okx"]
     assert c.errores == 0 and not c.pasa and "latencia" in c.motivo
+
+
+def test_la_calidad_de_la_captura_rest_no_cuenta_los_errores_del_websocket(tmp_path):
+    from radar.almacen import LakeParquet
+    from radar.analisis import evaluar_calidad
+    lake, t0 = LakeParquet(tmp_path), pd.Timestamp("2026-11-22 10:00", tz="UTC")
+    lake.guardar([{"exchange": "kraken", "recibido_utc": t0 + pd.Timedelta(seconds=i), "latencia_s": 0.1}
+                  for i in range(10)], "cotizaciones")
+    lake.guardar([{"exchange": "kraken", "recibido_utc": t0, "ronda": 3, "error": "HTTP 500"}], "errores_captura")
+    lake.guardar([{"exchange": "kraken", "recibido_utc": t0 + pd.Timedelta(seconds=5), "error": "hueco de secuencia",
+                   "origen": "flujo"}],
+                 "errores_captura")
+    assert len(lake.consultar("SELECT * FROM errores_captura")) == 2  # las dos filas están en el lake
+    assert evaluar_calidad(lake.consultar, lake.fuentes())["kraken"].errores == 1
