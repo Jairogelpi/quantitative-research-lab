@@ -55,6 +55,22 @@ MIN_SEGUNDOS_TRADES = 100     # segundos distintos con trades para resumir los s
 MIN_INTERVALOS = 100          # intervalos para estimar la lambda de Kyle
 IMPORTE_REFERENCIA_EUR = 100_000
 UMBRAL_IMPACTO = 0.5          # si el impacto es la mitad o más del spread efectivo, domina la selección adversa
+# Con cambios del libro, el mid solo se emite cuando cambia: un mid quieto sigue valiendo. Solo un tramo sin ningún
+# cambio de más de esto se toma como corte de la captura (mismo criterio que `presion.TOLERANCIA_LIBRO_S`).
+TOLERANCIA_EXACTOS_S = 300.0
+
+
+class _UltimoMid:
+    """Mid vigente en cada instante: el del último cambio en o antes, si no tiene más de `tolerancia` segundos y
+    el instante no cae después del último dato observado (ahí no se sabe si el mid cambió: NaN)."""
+
+    def __init__(self, t: np.ndarray, mid: np.ndarray, tolerancia: float):
+        self.t, self.mid, self.tolerancia = t, mid, tolerancia
+
+    def en(self, instantes: np.ndarray) -> np.ndarray:
+        i = np.searchsorted(self.t, instantes, side="right") - 1
+        ok = (i >= 0) & (instantes - self.t[np.maximum(i, 0)] <= self.tolerancia) & (instantes <= self.t[-1])
+        return np.where(ok, self.mid[np.maximum(i, 0)], np.nan)
 
 
 class _Libros:
@@ -66,19 +82,22 @@ class _Libros:
             self.t = g["recibido_ns"].to_numpy(dtype=np.int64) / 1e9
             self.mid = g["mid"].to_numpy(dtype=float)
             self.cotizado = g["cotizado_bps"].to_numpy(dtype=float)
+            self.tolerancia = TOLERANCIA_EXACTOS_S
+            self.posterior = _UltimoMid(self.t, self.mid, TOLERANCIA_EXACTOS_S)
         else:
             self.t = _segundos(g["recibido_utc"])
             bid = np.array([b[0] for b in g["bid_precios"]], dtype=float)
             ask = np.array([a[0] for a in g["ask_precios"]], dtype=float)
             self.mid = (bid + ask) / 2
             self.cotizado = (ask - bid) / self.mid * 1e4
-        self.posterior = _Mids(self.t, self.mid)
+            self.tolerancia = TOLERANCIA_S
+            self.posterior = _Mids(self.t, self.mid)  # fotos: la primera en o después de t + h
 
     def anterior(self, instantes: np.ndarray) -> np.ndarray:
-        """Índice del último libro estrictamente anterior a cada instante (−1 si no hay o es más viejo que
-        `TOLERANCIA_S`)."""
+        """Índice del último libro (o cambio del mid) estrictamente anterior a cada instante (−1 si no hay o es más
+        viejo que la tolerancia: 2 s con fotos, 300 s con cambios del libro)."""
         i = np.searchsorted(self.t, instantes, side="left") - 1
-        ok = (i >= 0) & (instantes - self.t[np.maximum(i, 0)] <= TOLERANCIA_S)
+        ok = (i >= 0) & (instantes - self.t[np.maximum(i, 0)] <= self.tolerancia)
         return np.where(ok, i, -1)
 
 

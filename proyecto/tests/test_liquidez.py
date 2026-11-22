@@ -122,3 +122,25 @@ def test_con_los_eventos_del_websocket_usa_el_mid_exacto_antes_de_cada_trade(tmp
     m = medidas_trades(mids, trades((0.6, 100.5, 0.1, "buy")), horizontes=(5,))
     assert m["mid_antes"].iloc[0] == 100.25  # el del cambio de 0,5 s, no el de la foto de 0 s
     assert m["efectivo_bps"].iloc[0] == pytest.approx(2 * (100.5 - 100.25) / 100.25 * 1e4)
+
+
+def test_con_mids_exactos_un_mid_quieto_sigue_valiendo_antes_y_despues_del_trade():
+    """Los cambios del libro solo se emiten cuando el mid cambia: un mid quieto 10 s es válido, y el mid en t + h es el
+    último cambio en o antes de t + h (no la primera foto después)."""
+    from radar.analisis.liquidez import medidas_trades
+    # El último dato a los 80 s: el mid de los 70 s (trade a 10 s + 60 s) cae dentro de lo observado.
+    mids = pd.DataFrame({"exchange": "kraken", "recibido_ns": [int(T0.value) + s * 10**9 for s in (0, 30, 80)],
+                         "mid": [100.0, 101.0, 102.0], "cotizado_bps": [10.0, 10.0, 10.0]})
+    m = medidas_trades(mids, trades((10, 100.05, 0.1, "buy")), horizontes=(5, 60))
+    assert len(m) == 1 and m["mid_antes"].iloc[0] == 100.0  # 10 s sin cambios: el mid sigue siendo 100
+    assert m["realizado_5_bps"].iloc[0] == pytest.approx(2 * (100.05 - 100.0) / 100.0 * 1e4)   # en 15 s, aún 100
+    assert m["impacto_60_bps"].iloc[0] == pytest.approx(2 * (101.0 - 100.0) / 100.0 * 1e4)    # en 70 s, ya 101
+
+
+def test_sin_datos_despues_de_t_mas_h_el_mid_futuro_no_se_inventa():
+    """Si t + h cae después del último cambio del libro observado, no se sabe el mid de entonces: NaN."""
+    from radar.analisis.liquidez import medidas_trades
+    mids = pd.DataFrame({"exchange": "kraken", "recibido_ns": [int(T0.value) + s * 10**9 for s in (0, 100)],
+                         "mid": [100.0, 101.0], "cotizado_bps": [10.0, 10.0]})
+    m = medidas_trades(mids, trades((95.5, 100.05, 0.1, "buy")), horizontes=(1, 60))
+    assert not np.isnan(m["impacto_1_bps"].iloc[0]) and np.isnan(m["impacto_60_bps"].iloc[0])
