@@ -160,3 +160,10 @@ def test_la_fuente_de_las_velas_separa_hipotesis(tmp_path):
     lake.guardar([fila(exchange="kraken", fuente=f, senal="momentum", ventana_velas=20, t=3.0, estado="confirmada")
                   for f in ("kraken_historico", "propia")], "estudios_prediccion")
     assert len(registrar_pruebas(lake.consultar, lake.fuentes())) == 2
+
+
+def test_las_confirmaciones_preregistradas_no_entran_en_la_familia(tmp_path):
+    """Un protocolo registrado antes de mirar es una sola hipótesis con su propio α: no es un descubrimiento."""
+    lake = LakeParquet(tmp_path)
+    lake.guardar([fila(exchange="kraken", t=5.0, estado="confirmada")], "estudios_protocolo")
+    assert registrar_pruebas(lake.consultar, lake.fuentes()) == []

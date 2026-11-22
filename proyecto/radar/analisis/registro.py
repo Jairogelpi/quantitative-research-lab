@@ -43,7 +43,7 @@ from .imbalance import ALFA, _p_valor
 
 FUENTE_REGISTRO = "registro_pruebas"
 FUENTES_ADICIONALES = ("perfiles_horarios",)
-FUENTES_EXCLUIDAS = ("estudios_robustez",)
+FUENTES_EXCLUIDAS = ("estudios_robustez", "estudios_protocolo")  # protocolo: confirmación preregistrada
 COLUMNAS_P = ("p_descubrimiento", "p_valor", "p_sustitutos")  # p_sustitutos: Hayashi-Yoshida (rotaciones)
 COLUMNAS_T = ("t_descubrimiento", "t_hac", "t_conjunto", "t_interaccion", "t", "t_r1")  # t_r1: R(1) de Bouchaud
 NO_PROBADAS = {"datos insuficientes", "calidad de datos insuficiente", "pendiente"}
