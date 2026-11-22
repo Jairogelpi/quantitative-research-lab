@@ -29,6 +29,7 @@ $pasos = @(
     @("ofi-eventos", "--horas", "168"),     # Fase 3: OFI con cada cambio del libro
     @("presion", "--horas", "168"),         # Fase 3: trade imbalance, CVD, intensidad, VWAP, exposición
     @("respuesta", "--horas", "168"),       # Fase 3: función de respuesta de Bouchaud
+    @("arbitraje", "--horas", "24"),        # Fase 6: caro (unos 3 min por cada 6 h de flujo)
     @("velas", "--horas", "168"),           # Fase 4: velas propias de la semana
     @("historico-kraken"),                  # Fase 4: lo nuevo de Kraken (idempotente)
     @("comparar-velas"),                    # Fase 4: propias frente a oficiales

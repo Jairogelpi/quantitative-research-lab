@@ -31,6 +31,8 @@ from radar.__main__ import main  # falla si __main__.py no compila
     ["comparar-velas", "--intervalos", "0"],
     ["retornos", "--fuente", "otra"],
     ["prediccion", "--intervalos", "0"],
+    ["arbitraje", "--horas", "0"],
+    ["protocolo", "--registrar", "--evaluar"],
     ["ofi", "--horizontes", "0"],
     ["simular", "--urgencia-adaptativa", "-1"],
 ])

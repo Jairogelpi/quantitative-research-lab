@@ -26,6 +26,8 @@
     python -m radar retornos [--fuente propia|kraken_historico] [--intervalo 3600] [--exchange kraken] [--no-guardar]
     python -m radar prediccion [--fuente kraken_historico] [--intervalos 86400,3600] [--no-guardar]
     python -m radar prediccion --abrir-muestra-guardada   (UNA sola vez: evalúa en datos desde 2025 lo que sobrevivió)
+    python -m radar arbitraje [--horas 6] [--no-guardar]
+    python -m radar protocolo --estado | --registrar | --evaluar [--seguimiento] | --desarrollo [--horas 3]
     python -m radar leadlag [--retardos 1,2,3] [--minimo 500] [--no-guardar]
     python -m radar senales [--horizonte 5] [--minimo 500] [--no-guardar]
     python -m radar ofi [--horizontes 1,5,10,30] [--niveles 1,5,10] [--minimo 200] [--no-guardar]
@@ -63,6 +65,8 @@ from radar.analisis.comparacion_velas import FUENTE_COMPARACION, comparar_velas,
 from radar.captura import historico_kraken
 from radar.captura.exchanges import kraken_historico
 from radar.analisis import prediccion
+from radar.analisis import protocolo_leadlag as protocolo
+from radar.analisis.arbitraje import FUENTE_ARBITRAJE, estudiar_arbitraje, guardar_arbitraje
 from radar.analisis.robustez import FUENTE_ROBUSTEZ, evaluar_robustez, guardar_robustez, resumen_robustez
 from radar.analisis.estacionalidad import FUENTE_PERFILES, efecto_hora, medianas_diarias, perfil_horario
 from radar.analisis import (FUENTE_ESTUDIOS, HORIZONTES, PRECIOS, estudiar_imbalance, evaluar_calidad, guardar_estudio,
@@ -453,6 +457,42 @@ def cmd_prediccion(args):
                        resultados, prediccion.guardar_estudio_prediccion, prediccion.FUENTE_PREDICCION)
 
 
+def cmd_arbitraje(args):
+    lake = LakeParquet()
+    if "eventos_libro" not in lake.fuentes():
+        print("Faltan cambios del libro del websocket: captúralos con `python -m radar flujo`.")
+        return
+    resumenes, _ = estudiar_arbitraje(lake.consultar, _hace_horas(args.horas))
+    _mostrar_y_guardar(args, lake, f"Arbitraje entre exchanges, episodios con ventaja neta positiva (últimas "
+                                   f"{args.horas:g} h):", resumenes, guardar_arbitraje, FUENTE_ARBITRAJE)
+
+
+def cmd_protocolo(args):
+    lake = LakeParquet()
+    try:
+        if args.registrar:
+            huella = protocolo.registrar_protocolo(lake, protocolo.PROTOCOLO_KRAKEN)
+            print(f"Protocolo registrado ({huella}). Solo se evaluará con datos recibidos desde ahora:")
+            print(protocolo.PROTOCOLO_KRAKEN.texto())
+        elif args.evaluar:
+            resultado = protocolo.evaluar_protocolo(lake, args.huella or protocolo.PROTOCOLO_KRAKEN.huella(),
+                                                    seguimiento=args.seguimiento)
+            print(resultado.texto() if isinstance(resultado, protocolo.EstadoEvaluacion) else resultado.conclusion())
+        elif args.desarrollo:
+            ahora = pd.Timestamp.now(tz="UTC")
+            print("Comprobación de desarrollo (datos ANTERIORES al registro; no cuenta para la decisión):")
+            print(protocolo.comprobar_desarrollo(lake, protocolo.PROTOCOLO_KRAKEN, _hace_horas(args.horas),
+                                                 ahora).conclusion())
+        else:
+            estados = protocolo.estado_protocolo(lake)
+            if not estados:
+                print("No hay protocolos registrados. Revisa el texto con `--desarrollo` y regístralo con `--registrar`.")
+            for e in estados:
+                print(e.texto())
+    except (protocolo.ProtocoloYaRegistrado, protocolo.ProtocoloYaEvaluado, ValueError) as error:
+        print(f"No se hace: {error}")
+
+
 def cmd_estacionalidad(args):
     lake = LakeParquet()
     perfil = perfil_horario(lake.consultar, args.banda)
@@ -600,6 +640,20 @@ def main(argv=None):
                    help="Evalúa UNA sola vez, en los datos desde 2025, las señales que sobrevivieron al desarrollo")
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
     p.set_defaults(func=cmd_prediccion)
+    p = sub.add_parser("arbitraje", help="Arbitraje entre exchanges: episodios con ventaja neta, profundidad y latencia")
+    p.add_argument("--horas", type=float, default=6, help="Ventana hacia atrás, en horas (reconstruir el libro es lento)")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_arbitraje)
+    p = sub.add_parser("protocolo", help="Estudio integral Kraken sigue a OKX y Bitvavo, con protocolo registrado antes de mirar")
+    accion = p.add_mutually_exclusive_group()
+    accion.add_argument("--registrar", action="store_true", help="Sella el protocolo: desde ahora empieza su muestra")
+    accion.add_argument("--evaluar", action="store_true", help="Evalúa UNA vez con los datos posteriores al registro")
+    accion.add_argument("--desarrollo", action="store_true", help="Comprobación con datos anteriores (no decide nada)")
+    accion.add_argument("--estado", action="store_true", help="Cuántos datos hay frente a los necesarios (por defecto)")
+    p.add_argument("--seguimiento", action="store_true", help="Con --evaluar: nueva muestra tras la evaluación, sin decidir")
+    p.add_argument("--huella", help="Hash del protocolo (por defecto, el de Kraken)")
+    p.add_argument("--horas", type=float, default=3, help="Con --desarrollo: ventana hacia atrás, en horas")
+    p.set_defaults(func=cmd_protocolo)
     p = sub.add_parser("ofi-eventos", help="OFI evento a evento (Cont-Kukanov-Stoikov) con los cambios del libro")
     p.add_argument("--horas", type=float, default=6, help="Ventana hacia atrás, en horas (reconstruir el libro es lento)")
     p.add_argument("--intervalos", type=lambda t: tuple(float(x) for x in t.split(",")), default=(1.0, 10.0),
@@ -635,7 +689,8 @@ def main(argv=None):
         parser.error(f"exchanges disponibles: {', '.join(EXCHANGES)}")
     if getattr(args, "segundos", 1) <= 0:
         parser.error("los segundos deben ser positivos")
-    if args.comando in ("relojes", "hy", "liquidez", "presion", "respuesta", "ofi-eventos") and args.horas <= 0:
+    if args.comando in ("relojes", "hy", "liquidez", "presion", "respuesta", "ofi-eventos", "arbitraje",
+                        "protocolo") and args.horas <= 0:
         parser.error("las horas deben ser positivas")
     if args.comando == "hy" and (args.rango <= 0 or args.paso <= 0 or args.paso > args.rango or args.sustitutos < 19):
         parser.error("rango y paso positivos, paso no mayor que el rango y al menos 19 sustitutos")
