@@ -153,3 +153,10 @@ def test_los_estudios_de_la_fase_3_entran_completos_en_la_familia(tmp_path):
         por_estudio.setdefault(p.estudio, []).append(p)
     assert len(por_estudio["presion_relacion"]) == 4
     assert por_estudio["presion_vwap"][0].hallazgo and por_estudio["respuesta_precio"][0].hallazgo
+
+
+def test_la_fuente_de_las_velas_separa_hipotesis(tmp_path):
+    lake = LakeParquet(tmp_path)
+    lake.guardar([fila(exchange="kraken", fuente=f, senal="momentum", ventana_velas=20, t=3.0, estado="confirmada")
+                  for f in ("kraken_historico", "propia")], "estudios_prediccion")
+    assert len(registrar_pruebas(lake.consultar, lake.fuentes())) == 2

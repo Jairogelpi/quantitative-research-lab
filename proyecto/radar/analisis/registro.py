@@ -52,7 +52,7 @@ HALLAZGOS = {"confirmada", "aporta información propia", "explica el precio", "d
              "impacto significativo",  # lambda de Kyle: el volumen neto mueve el precio
              "el lado neto paga sobre el mid", "el lado neto mejora el mid",  # VWAP frente al mid (presión)
              "impacto permanente", "impacto mayormente transitorio", "impacto mixto"}  # respuesta de Bouchaud
-PARAMETROS = ("senal", "precio_referencia", "contexto", "variable", "base", "medida", "relacion")
+PARAMETROS = ("senal", "precio_referencia", "contexto", "variable", "base", "medida", "relacion", "fuente")
 PREFIJOS_PARAMETRO = ("banda_", "niveles", "horizonte_", "retardo_", "ventana_", "frecuencia_", "escala_",
                       "intervalo_", "espera_")
 
