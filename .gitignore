@@ -7,4 +7,5 @@ data/raw/
 data/processed/
 *.egg-info/
 data/lake/
+data/logs/
 data/quantlab.duckdb
