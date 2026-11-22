@@ -120,15 +120,28 @@ def ejecutar_plan(libros: list[Libro], plan, decision_utc: pd.Timestamp, comisio
                   impacto_bps_por_100k: float = 0.0, estrategia: str = "", tolerancia_s: float = TOLERANCIA_S
                   ) -> ResultadoEjecucion | None:
     """Ejecuta `plan` (compra) sobre los libros guardados (ordenados en el tiempo). None si falta alguna foto."""
+    return ejecutar_politica(libros, [s for s, _ in plan], lambda j, libro, pendiente: plan[j][1],
+                             sum(i for _, i in plan), decision_utc, comision, impacto_bps_por_100k, estrategia,
+                             tolerancia_s)
+
+
+def ejecutar_politica(libros: list[Libro], segundos, politica, importe_eur: float, decision_utc: pd.Timestamp,
+                      comision: float, impacto_bps_por_100k: float = 0.0, estrategia: str = "",
+                      tolerancia_s: float = TOLERANCIA_S) -> ResultadoEjecucion | None:
+    """Como `ejecutar_plan`, pero el importe del trozo j lo decide `politica(j, libro, pendiente_eur)` mirando el
+    libro de ese momento (ejecución adaptativa). Un importe 0 no compra en ese trozo."""
     inicial = _libro_en(libros, decision_utc, tolerancia_s)
     if inicial is None:
         return None
     trozos, ejecutado = [], 0.0
-    for segundos, importe in plan:
-        momento = decision_utc + pd.Timedelta(seconds=segundos)
+    for j, s in enumerate(segundos):
+        momento = decision_utc + pd.Timedelta(seconds=s)
         libro = _libro_en(libros, momento, tolerancia_s)
         if libro is None:
             return None
+        importe = politica(j, libro, importe_eur - ejecutado)
+        if importe <= importe_eur * 1e-12:
+            continue
         impacto = impacto_bps_por_100k * ejecutado / 100_000
         trozos.append(Trozo(momento, libro.mejor_nivel().mid, impacto, barrer_compra(desplazar(libro, impacto), importe)))
         ejecutado += importe

@@ -7,6 +7,8 @@ Conceptos:
   desviación típica mide el riesgo (lo que añade esperar). Es el dilema impacto frente a riesgo de timing, medido.
 - Mismas ventanas para todas las estrategias: solo cuentan las ventanas en las que todas se pueden simular.
 - Mínimo de ventanas: con pocas, no se concluye.
+- Fuera de muestra: con una señal del análisis (Almgren-Chriss adaptativo), solo cuentan las ventanas posteriores a
+  los datos del estudio que la dio, para TODAS las estrategias.
 """
 
 from __future__ import annotations
@@ -20,11 +22,12 @@ import pandas as pd
 
 from radar.mercado import Libro
 
+from .adaptativo import ejecutar_adaptativo
 from .almgren_chriss import plan_almgren_chriss
 from .simulador import ejecutar_plan, plan_todo_de_golpe, plan_twap
 
 FUENTE_LIBROS, FUENTE_SIMULACIONES = "libros", "simulaciones_ejecucion"
-GOLPE, TWAP, ALMGREN_CHRISS = "todo de golpe", "twap", "almgren-chriss"
+GOLPE, TWAP, ALMGREN_CHRISS, ADAPTATIVO = "todo de golpe", "twap", "almgren-chriss", "adaptativo"
 MIN_VENTANAS = 10
 
 
@@ -80,12 +83,17 @@ class ResumenEstrategia:
 
 
 def comparar_estrategias(libros: list[Libro], importe_eur: float, trozos: int, duracion_s: float, comision: float,
-                         impactos=(0.0, 1.0, 5.0), minimo: int = MIN_VENTANAS, urgencias=()) -> list[ResumenEstrategia]:
+                         impactos=(0.0, 1.0, 5.0), minimo: int = MIN_VENTANAS, urgencias=(), senal=None,
+                         adaptativas=(), desde_utc: pd.Timestamp | None = None) -> list[ResumenEstrategia]:
     """Todo de golpe frente a TWAP en cada ventana de `duracion_s` que cabe entera en la captura, para cada
-    valor de impacto permanente; con `urgencias`, también Almgren-Chriss con cada urgencia κT."""
+    valor de impacto permanente; con `urgencias`, también Almgren-Chriss con cada urgencia κT; con `senal` y
+    `adaptativas` [(urgencia, intensidad)], también Almgren-Chriss adaptativo. Con `desde_utc`, solo ventanas
+    que empiezan después (fuera de la muestra del estudio que dio la señal)."""
     if not libros:
         return []
     ultimo, inicio = libros[-1].recibido_utc, libros[0].recibido_utc
+    if desde_utc is not None and desde_utc > inicio:
+        inicio = desde_utc
     decisiones = []
     while inicio + pd.Timedelta(seconds=duracion_s) <= ultimo:
         decisiones.append(inicio)
@@ -93,14 +101,20 @@ def comparar_estrategias(libros: list[Libro], importe_eur: float, trozos: int, d
     planes = {GOLPE: plan_todo_de_golpe(importe_eur), TWAP: plan_twap(importe_eur, trozos, duracion_s)}
     for urgencia in urgencias:
         planes[f"{ALMGREN_CHRISS} κT={urgencia:g}"] = plan_almgren_chriss(importe_eur, trozos, duracion_s, urgencia)
+    ejecutores = {e: (lambda d, impacto, e=e, plan=plan: ejecutar_plan(libros, plan, d, comision, impacto, e))
+                  for e, plan in planes.items()}
+    if senal is not None:
+        for urgencia, intensidad in adaptativas:
+            e = f"{ADAPTATIVO} κT={urgencia:g} intensidad={intensidad:g}"
+            ejecutores[e] = (lambda d, impacto, e=e, u=urgencia, i=intensidad: ejecutar_adaptativo(
+                libros, importe_eur, trozos, duracion_s, u, senal, i, d, comision, impacto, e))
     resumenes = []
     for impacto in impactos:
         # Solo cuentan las ventanas en las que TODAS las estrategias se pueden simular completas: compararlas en
         # ventanas distintas mezclaría la diferencia entre estrategias con la diferencia entre momentos.
-        por_ventana = [{e: ejecutar_plan(libros, plan, d, comision, impacto, e) for e, plan in planes.items()}
-                       for d in decisiones]
+        por_ventana = [{e: ejecutar(d, impacto) for e, ejecutar in ejecutores.items()} for d in decisiones]
         comunes = [v for v in por_ventana if all(r is not None and r.completa for r in v.values())]
-        for estrategia in planes:
+        for estrategia in ejecutores:
             resultados = [v[estrategia] for v in comunes]
 
             def media(f):

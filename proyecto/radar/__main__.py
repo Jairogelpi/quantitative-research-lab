@@ -5,7 +5,8 @@
     python -m radar costes [--importe 1000] [--niveles 100]
     python -m radar analizar [--horizontes 1,5,10,30] [--minimo 200] [--precio mid|microprice] [--no-guardar]
     python -m radar simular [--exchange kraken] [--importe 100000] [--trozos 20] [--duracion 600]
-                            [--impactos 0,1,5] [--urgencias 1,3] [--no-guardar]
+                            [--impactos 0,1,5] [--urgencias 1,3] [--urgencia-adaptativa 1]
+                            [--intensidades 0.5,1] [--no-guardar]
     python -m radar catalogo
     python -m radar consultar "SELECT exchange, median(spread_bps) FROM cotizaciones GROUP BY exchange"
 """
@@ -25,7 +26,8 @@ from radar.captura.exchanges import crear_fuentes
 from radar.configuracion import (BANDAS_BPS, CATALOGO, COMISIONES_TAKER, EXCHANGES, IMPORTE_COMPARACION,
                                  NIVELES_GUARDADOS, NIVELES_LIBRO, comisiones_taker)
 from radar.ejecucion import (FUENTE_SIMULACIONES, aversion_implicita, cargar_libros, comparar_estrategias,
-                             comparar_texto, estimar_impacto_temporal, estimar_volatilidad)
+                             comparar_texto, elegir_senal, estimar_impacto_temporal, estimar_volatilidad)
+from radar.ejecucion.replay import MIN_VENTANAS
 from radar.mercado import comparar_costes
 
 
@@ -99,8 +101,21 @@ def cmd_simular(args):
         for u in args.urgencias:
             print(f"  Almgren-Chriss κT={u:g}: aversión al riesgo implícita λ = "
                   f"{aversion_implicita(u, args.duracion, args.trozos, sigma2, k):.2e} por €.")
+    senal = None
+    if libros and args.intensidades and FUENTE_ESTUDIOS in lake.fuentes():
+        # La señal debe venir de un estudio que terminó antes de las ventanas que se simulan (fuera de muestra).
+        limite = libros[-1].recibido_utc - pd.Timedelta(seconds=MIN_VENTANAS * args.duracion)
+        senal = elegir_senal(lake.consultar(f"SELECT * FROM {FUENTE_ESTUDIOS}"), args.exchange,
+                             args.duracion / args.trozos, limite)
+    if senal:
+        print(f"Señal para el adaptativo: {senal.descripcion()}. Todas las estrategias se comparan solo en ventanas "
+              f"posteriores a {senal.hasta_utc:%Y-%m-%d %H:%M:%S} UTC (fuera de muestra).")
+    elif args.intensidades:
+        print("Sin hallazgo confirmado de imbalance en un estudio anterior a los libros: no se simula el adaptativo.")
     resumenes = comparar_estrategias(libros, args.importe, args.trozos, args.duracion,
-                                     comisiones_taker()[args.exchange], args.impactos, urgencias=args.urgencias)
+                                     comisiones_taker()[args.exchange], args.impactos, urgencias=args.urgencias,
+                                     senal=senal, adaptativas=[(args.urgencia_adaptativa, i) for i in args.intensidades],
+                                     desde_utc=senal.hasta_utc if senal else None)
     for r in resumenes:
         print(f"  - {r.conclusion()}")
     for frase in comparar_texto(resumenes):
@@ -147,7 +162,7 @@ def main(argv=None):
     p.add_argument("--precio", choices=sorted(PRECIOS), default="mid", help="Precio de referencia del retorno")
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar el estudio en el lake")
     p.set_defaults(func=cmd_analizar)
-    p = sub.add_parser("simular", help="Simula una compra grande todo de golpe frente a TWAP sobre los libros guardados")
+    p = sub.add_parser("simular", help="Simula una compra grande (todo de golpe, TWAP, Almgren-Chriss y adaptativo) sobre los libros guardados")
     p.add_argument("--exchange", choices=EXCHANGES, default="kraken")
     p.add_argument("--importe", type=float, default=100_000, help="EUR a comprar")
     p.add_argument("--trozos", type=int, default=20, help="Trozos del TWAP")
@@ -156,6 +171,10 @@ def main(argv=None):
                    help="Impacto permanente supuesto, en bps por cada 100.000 € ejecutados, separados por comas")
     p.add_argument("--urgencias", type=lambda t: tuple(float(x) for x in t.split(",")), default=(1.0, 3.0),
                    help="Urgencias κT de Almgren-Chriss, separadas por comas (0 = TWAP)")
+    p.add_argument("--urgencia-adaptativa", type=float, default=1.0,
+                   help="Urgencia κT del Almgren-Chriss base del adaptativo")
+    p.add_argument("--intensidades", type=lambda t: tuple(float(x) for x in t.split(",") if x), default=(0.5, 1.0),
+                   help="Intensidades del adaptativo (cuánto adelanta o retrasa con el imbalance); vacío = no simular")
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
     p.set_defaults(func=cmd_simular)
     sub.add_parser("catalogo", help="Crea data/quantlab.duckdb para DBeaver").set_defaults(func=cmd_catalogo)
@@ -172,8 +191,9 @@ def main(argv=None):
     if getattr(args, "niveles", 1) < 1:
         parser.error("los niveles deben ser al menos 1")
     if args.comando == "simular" and (args.importe <= 0 or args.trozos < 1 or args.duracion <= 0
-                                      or min(args.impactos) < 0 or min(args.urgencias) < 0):
-        parser.error("importe y duración positivos, al menos 1 trozo, e impactos y urgencias no negativos")
+                                      or min(args.impactos) < 0 or min(args.urgencias, default=0) < 0
+                                      or args.urgencia_adaptativa < 0 or min(args.intensidades, default=0) < 0):
+        parser.error("importe y duración positivos, al menos 1 trozo, e impactos, urgencias e intensidades no negativos")
     args.func(args)
 
 

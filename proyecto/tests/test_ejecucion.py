@@ -137,3 +137,98 @@ def test_comparar_estrategias_incluye_almgren_chriss_por_urgencia():
     resumen = comparar_estrategias(libros, 150, trozos=3, duracion_s=60, comision=0, impactos=(0,), minimo=3,
                                    urgencias=(1, 3))
     assert [r.estrategia for r in resumen] == ["todo de golpe", "twap", "almgren-chriss κT=1", "almgren-chriss κT=3"]
+
+
+# Paso 4 · Almgren-Chriss adaptativo con la señal de imbalance del análisis.
+
+def libro_desequilibrado(segundo, cantidad_bids, cantidad_asks):
+    """mid 99,5; en la banda de 100 bps solo entran el bid 99 y el ask 100; 90 y 110 quedan fuera (banda cubierta)."""
+    t = T0 + pd.Timedelta(seconds=segundo)
+    return Libro("kraken", "BTC/EUR", (Nivel(99, cantidad_bids), Nivel(90, 1000)),
+                 (Nivel(100, cantidad_asks), Nivel(110, 1000)), t, t)
+
+
+def senal(diferencia=0.3):
+    from radar.ejecucion import SenalImbalance
+    return SenalImbalance("kraken", 100, 5, diferencia, T0, T0)
+
+
+def test_adaptativo_sin_intensidad_es_almgren_chriss():
+    from radar.ejecucion import ejecutar_adaptativo, plan_almgren_chriss
+    libros = [libro_desequilibrado(s, 30, 10) for s in range(0, 61)]
+    base = ejecutar_plan(libros, plan_almgren_chriss(150, 3, 60, 1), T0, comision=0)
+    adaptado = ejecutar_adaptativo(libros, 150, 3, 60, 1, senal(), 0, T0, comision=0)
+    assert [t.ejecucion.importe_eur for t in adaptado.trozos] == pytest.approx([t.ejecucion.importe_eur for t in base.trozos])
+
+
+def test_adaptativo_adelanta_con_imbalance_a_favor_y_retrasa_en_contra():
+    from radar.ejecucion import ejecutar_adaptativo, plan_twap
+    base = plan_twap(150, 3, 60)[0][1]  # urgencia 0: el plan base es TWAP, 50 € por trozo
+    compradores = [libro_desequilibrado(s, 30, 10) for s in range(0, 61)]   # imbalance +0,5
+    vendedores = [libro_desequilibrado(s, 10, 30) for s in range(0, 61)]    # imbalance −0,5
+    adelanta = ejecutar_adaptativo(compradores, 150, 3, 60, 0, senal(), 1, T0, comision=0)
+    retrasa = ejecutar_adaptativo(vendedores, 150, 3, 60, 0, senal(), 1, T0, comision=0)
+    assert adelanta.trozos[0].ejecucion.importe_eur == pytest.approx(base * 1.5)
+    assert retrasa.trozos[0].ejecucion.importe_eur == pytest.approx(base * 0.5)
+    # Con un hallazgo de signo contrario, el mismo libro hace lo contrario.
+    invertido = ejecutar_adaptativo(compradores, 150, 3, 60, 0, senal(-0.3), 1, T0, comision=0)
+    assert invertido.trozos[0].ejecucion.importe_eur == pytest.approx(base * 0.5)
+    for r in (adelanta, retrasa, invertido):  # el último trozo compra lo que quede: siempre se compra todo
+        assert r.importe_eur == pytest.approx(150) and r.completa
+
+
+def test_adaptativo_con_intensidad_grande_compra_todo_al_principio_y_no_falla_con_trozos_vacios():
+    from radar.ejecucion import ejecutar_adaptativo
+    compradores = [libro_desequilibrado(s, 30, 10) for s in range(0, 61)]
+    vendedores = [libro_desequilibrado(s, 10, 30) for s in range(0, 61)]
+    todo = ejecutar_adaptativo(compradores, 150, 3, 60, 0, senal(), 10, T0, comision=0)
+    assert len(todo.trozos) == 1 and todo.importe_eur == pytest.approx(150)
+    nada = ejecutar_adaptativo(vendedores, 150, 3, 60, 0, senal(), 10, T0, comision=0)
+    assert len(nada.trozos) == 1 and nada.trozos[0].objetivo_utc == T0 + pd.Timedelta(seconds=40)
+    with pytest.raises(ValueError):
+        ejecutar_adaptativo(compradores, 150, 3, 60, 0, senal(), -1, T0, comision=0)
+
+
+def test_adaptativo_sin_banda_cubierta_sigue_el_plan_base():
+    from radar.ejecucion import ejecutar_adaptativo
+    libros = [libro(s) for s in range(0, 61)]  # un solo bid a 99: la banda de 100 bps no está cubierta
+    r = ejecutar_adaptativo(libros, 150, 3, 60, 0, senal(), 1, T0, comision=0)
+    assert [t.ejecucion.importe_eur for t in r.trozos] == pytest.approx([50, 50, 50])
+
+
+def estudios(*filas):
+    columnas = ["ejecutado_utc", "hasta_utc", "exchange", "estado", "banda_bps", "horizonte_rondas",
+                "diferencia_confirmacion"]
+    return pd.DataFrame(filas, columns=columnas)
+
+
+def test_elegir_senal_usa_el_ultimo_estudio_anterior_y_el_horizonte_mas_parecido():
+    from radar.ejecucion import elegir_senal
+    viejo, nuevo = T0, T0 + pd.Timedelta(hours=3)
+    tabla = estudios(
+        (viejo, T0 - pd.Timedelta(minutes=5), "kraken", "confirmada", 1, 1, 0.06),
+        (viejo, T0 - pd.Timedelta(minutes=1), "kraken", "confirmada", 5, 5, 0.40),
+        (viejo, T0 - pd.Timedelta(minutes=1), "kraken", "sin evidencia", 10, 5, 0.90),
+        (viejo, T0 - pd.Timedelta(minutes=1), "okx", "confirmada", 1, 5, 0.90),
+        (nuevo, nuevo, "kraken", "confirmada", 10, 5, 0.50),  # usa datos de las ventanas: no vale
+    )
+    s = elegir_senal(tabla, "kraken", paso_s=6, antes_de=T0 + pd.Timedelta(hours=1))
+    assert (s.banda_bps, s.horizonte_rondas, s.diferencia_bps) == (5, 5, 0.40)
+    assert s.hasta_utc == T0 - pd.Timedelta(minutes=1) and s.ejecutado_utc == viejo and s.signo == 1
+    assert "banda 5 bps, horizonte 5 rondas" in s.descripcion()
+    assert elegir_senal(tabla, "bitvavo", 6, T0 + pd.Timedelta(hours=1)) is None
+    assert elegir_senal(tabla, "kraken", 6, T0 - pd.Timedelta(minutes=2)) is None  # ningún estudio terminó antes
+    assert elegir_senal(estudios(), "kraken", 6, T0) is None
+
+
+def test_comparar_estrategias_con_adaptativo_solo_fuera_de_muestra():
+    libros = [libro_desequilibrado(s, 30, 10) for s in range(0, 300)]
+    resumen = comparar_estrategias(libros, 150, trozos=3, duracion_s=60, comision=0, impactos=(0,), minimo=1,
+                                   urgencias=(1,), senal=senal(), adaptativas=[(1, 0.5)],
+                                   desde_utc=T0 + pd.Timedelta(seconds=100))
+    assert [r.estrategia for r in resumen] == ["todo de golpe", "twap", "almgren-chriss κT=1",
+                                               "adaptativo κT=1 intensidad=0.5"]
+    assert {r.n for r in resumen} == {3}  # ventanas desde 100 s: 100, 160 y 220 (sin desde_utc serían 4)
+    sin_senal = comparar_estrategias(libros, 150, trozos=3, duracion_s=60, comision=0, impactos=(0,), minimo=1,
+                                     adaptativas=[(1, 0.5)])
+    assert [r.estrategia for r in sin_senal] == ["todo de golpe", "twap"] and sin_senal[0].n == 4
