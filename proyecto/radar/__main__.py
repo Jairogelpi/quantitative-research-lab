@@ -24,6 +24,8 @@
     python -m radar historico-kraken [--archivo RUTA_O_URL ...] [--intervalos-zip 60,1440] [--sin-zip]
     python -m radar comparar-velas [--intervalos 60,300,3600,86400] [--no-guardar]
     python -m radar retornos [--fuente propia|kraken_historico] [--intervalo 3600] [--exchange kraken] [--no-guardar]
+    python -m radar prediccion [--fuente kraken_historico] [--intervalos 86400,3600] [--no-guardar]
+    python -m radar prediccion --abrir-muestra-guardada   (UNA sola vez: evalúa en datos desde 2025 lo que sobrevivió)
     python -m radar leadlag [--retardos 1,2,3] [--minimo 500] [--no-guardar]
     python -m radar senales [--horizonte 5] [--minimo 500] [--no-guardar]
     python -m radar ofi [--horizontes 1,5,10,30] [--niveles 1,5,10] [--minimo 200] [--no-guardar]
@@ -60,6 +62,7 @@ from radar.analisis.retornos import FUENTE_RETORNOS, estudiar_retornos_lake, gua
 from radar.analisis.comparacion_velas import FUENTE_COMPARACION, comparar_velas, guardar_comparacion_velas
 from radar.captura import historico_kraken
 from radar.captura.exchanges import kraken_historico
+from radar.analisis import prediccion
 from radar.analisis.robustez import FUENTE_ROBUSTEZ, evaluar_robustez, guardar_robustez, resumen_robustez
 from radar.analisis.estacionalidad import FUENTE_PERFILES, efecto_hora, medianas_diarias, perfil_horario
 from radar.analisis import (FUENTE_ESTUDIOS, HORIZONTES, PRECIOS, estudiar_imbalance, evaluar_calidad, guardar_estudio,
@@ -427,6 +430,29 @@ def cmd_retornos(args):
                        guardar_estudio_retornos, FUENTE_RETORNOS)
 
 
+def cmd_prediccion(args):
+    lake = LakeParquet()
+    if "velas" not in lake.fuentes():
+        print("No hay velas: créalas con `python -m radar historico-kraken`.")
+        return
+    if args.abrir_muestra_guardada:
+        try:
+            resultados = prediccion.abrir_muestra_guardada(lake, pd.Timestamp.now(tz="UTC"), args.fuente, args.intervalos)
+        except (prediccion.MuestraGuardadaYaAbierta, ValueError) as error:
+            print(f"No se abre la muestra guardada: {error}")
+            return
+        if not resultados:
+            print("Ninguna señal sobrevivió al desarrollo: la muestra guardada sigue cerrada.")
+            return
+        print("Muestra guardada ABIERTA (desde el 01-01-2025; no se puede volver a abrir para esta familia):")
+        for r in resultados:
+            print(f"  - {r.conclusion()}")
+        return
+    resultados = prediccion.estudiar_prediccion_lake(lake.consultar, args.fuente, args.intervalos)
+    _mostrar_y_guardar(args, lake, "Momentum y reversión, solo con la muestra de desarrollo (hasta el 31-12-2024):",
+                       resultados, prediccion.guardar_estudio_prediccion, prediccion.FUENTE_PREDICCION)
+
+
 def cmd_estacionalidad(args):
     lake = LakeParquet()
     perfil = perfil_horario(lake.consultar, args.banda)
@@ -565,6 +591,15 @@ def main(argv=None):
     p.add_argument("--exchange", choices=EXCHANGES, default=None)
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
     p.set_defaults(func=cmd_retornos)
+    p = sub.add_parser("prediccion", help="Momentum y reversión con validación purgada y muestra guardada bajo llave")
+    p.add_argument("--fuente", choices=("propia", "kraken_historico"), default=prediccion.FUENTE_POR_DEFECTO)
+    p.add_argument("--intervalos", type=lambda t: tuple(int(x) for x in t.split(",")),
+                   default=prediccion.INTERVALOS_POR_DEFECTO,
+                   help="Segundos de vela, separados por comas (otra lista es otra familia, con su propia muestra guardada)")
+    p.add_argument("--abrir-muestra-guardada", action="store_true",
+                   help="Evalúa UNA sola vez, en los datos desde 2025, las señales que sobrevivieron al desarrollo")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_prediccion)
     p = sub.add_parser("ofi-eventos", help="OFI evento a evento (Cont-Kukanov-Stoikov) con los cambios del libro")
     p.add_argument("--horas", type=float, default=6, help="Ventana hacia atrás, en horas (reconstruir el libro es lento)")
     p.add_argument("--intervalos", type=lambda t: tuple(float(x) for x in t.split(",")), default=(1.0, 10.0),
@@ -604,6 +639,8 @@ def main(argv=None):
         parser.error("las horas deben ser positivas")
     if args.comando == "hy" and (args.rango <= 0 or args.paso <= 0 or args.paso > args.rango or args.sustitutos < 19):
         parser.error("rango y paso positivos, paso no mayor que el rango y al menos 19 sustitutos")
+    if args.comando == "prediccion" and min(args.intervalos) <= 0:
+        parser.error("los intervalos deben ser positivos")
     if args.comando == "velas" and (args.horas <= 0 or min(args.intervalos) <= 0):
         parser.error("horas e intervalos positivos")
     if args.comando in ("historico-kraken",) and min(args.intervalos_zip + args.intervalos_rest) <= 0:
