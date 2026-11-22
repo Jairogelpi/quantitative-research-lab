@@ -10,6 +10,13 @@
     python -m radar estacionalidad [--banda 10] [--no-guardar]
     python -m radar flujo [segundos] [--exchanges kraken,okx,bitvavo]
     python -m radar markouts [--no-guardar]
+    python -m radar liquidez [--horas 6] [--no-guardar]
+    python -m radar volatilidad [--no-guardar]
+    python -m radar relojes [--horas 24] [--no-guardar]
+    python -m radar hy [--horas 2] [--rango 5] [--paso 0.01] [--sustitutos 199] [--no-guardar]
+    python -m radar revalidar [--no-guardar]
+    python -m radar registro [--todas] [--no-guardar]
+    python -m radar robustez [--no-guardar]
     python -m radar leadlag [--retardos 1,2,3] [--minimo 500] [--no-guardar]
     python -m radar senales [--horizonte 5] [--minimo 500] [--no-guardar]
     python -m radar ofi [--horizontes 1,5,10,30] [--niveles 1,5,10] [--minimo 200] [--no-guardar]
@@ -31,6 +38,14 @@ from radar.analisis.leadlag import FUENTE_LEAD_LAG, estudiar_lead_lag, matriz_co
 from radar.analisis.senales import (FUENTE_SENALES, HORIZONTES_DECAIMIENTO, aporte_senales, correlaciones,
                                    decaimiento, interacciones, tabla_senales)
 from radar.analisis.markouts import FUENTE_MARKOUTS, estudiar_markouts
+from radar.analisis.liquidez import FUENTE_LIQUIDEZ, estudiar_liquidez, guardar_estudio_liquidez
+from radar.analisis.volatilidad import FUENTE_VOLATILIDAD, estudiar_volatilidad, guardar_estudio_volatilidad
+from radar.analisis.relojes import FUENTE_RELOJES, diagnostico_comun, guardar_relojes, medir_relojes
+from radar.analisis.hayashi_yoshida import (FUENTE_HY, estudiar_hayashi_yoshida, guardar_hayashi_yoshida,
+                                            incertidumbres_desde_relojes, mids_flujo)
+from radar.analisis.revalidacion import guardar_estudio_senales, guardar_revalidaciones_estudios, revalidar_todo
+from radar.analisis.registro import FUENTE_REGISTRO, guardar_registro, registrar_pruebas, resumen_registro
+from radar.analisis.robustez import FUENTE_ROBUSTEZ, evaluar_robustez, guardar_robustez, resumen_robustez
 from radar.analisis.estacionalidad import FUENTE_PERFILES, efecto_hora, medianas_diarias, perfil_horario
 from radar.analisis import (FUENTE_ESTUDIOS, HORIZONTES, PRECIOS, estudiar_imbalance, evaluar_calidad, guardar_estudio,
                             guardar_revalidaciones, leer_ultimo_estudio, pares_imbalance_retorno, revalidar)
@@ -213,8 +228,7 @@ def cmd_senales(args):
                 print(f"  - {r.conclusion()}")
     if not args.no_guardar:
         ahora = pd.Timestamp.now(tz="UTC")
-        lake.guardar([{"ejecutado_utc": ahora, "recibido_utc": ahora, **r.a_fila()} for r in resultados],
-                     FUENTE_SENALES)
+        guardar_estudio_senales(resultados, tabla, lake, ahora)  # con `hasta_utc`, para poder revalidarlos
         print(f"\nGuardado en el lake: {len(resultados)} resultados en '{FUENTE_SENALES}'.")
 
 
@@ -238,6 +252,87 @@ def cmd_markouts(args):
                      FUENTE_MARKOUTS)
         print()
         print(f"Guardado en el lake: {len(resultados)} resultados en '{FUENTE_MARKOUTS}'.")
+
+
+def _mostrar_y_guardar(args, lake, titulo, resultados, guardar, fuente):
+    """Imprime la conclusión de cada resultado y, salvo `--no-guardar`, los guarda en `fuente`."""
+    print(titulo)
+    for r in resultados:
+        print(f"  - {r.conclusion()}")
+    if not args.no_guardar and resultados:
+        guardar(resultados, lake, pd.Timestamp.now(tz="UTC"))
+        print()
+        print(f"Guardado en el lake: {len(resultados)} resultados en '{fuente}'.")
+
+
+def _hace_horas(horas):
+    return pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=horas)
+
+
+def cmd_liquidez(args):
+    lake = LakeParquet()
+    if not {"trades", "eventos_libro"} <= set(lake.fuentes()):
+        print("Faltan trades o cambios del libro del websocket: captúralos con `python -m radar flujo`.")
+        return
+    print(f"Mid exacto antes de cada trade, reconstruido con los cambios del libro de las últimas {args.horas:g} h.")
+    spreads, lambdas = estudiar_liquidez(lake.consultar, _hace_horas(args.horas))
+    _mostrar_y_guardar(args, lake, "Spreads efectivo y realizado, impacto y lambda de Kyle (datos del websocket):",
+                       spreads + lambdas, guardar_estudio_liquidez, FUENTE_LIQUIDEZ)
+
+
+def cmd_volatilidad(args):
+    lake = LakeParquet()
+    _mostrar_y_guardar(args, lake, "Volatilidad realizada robusta al ruido (two-scale) y signature plot:",
+                       estudiar_volatilidad(lake.consultar), guardar_estudio_volatilidad, FUENTE_VOLATILIDAD)
+
+
+def cmd_relojes(args):
+    lake = LakeParquet()
+    relojes = medir_relojes(lake.consultar, _hace_horas(args.horas))
+    _mostrar_y_guardar(args, lake, f"Relojes: desfase entre la hora del exchange y la nuestra (últimas {args.horas:g} h):",
+                       relojes, guardar_relojes, FUENTE_RELOJES)
+    print()
+    print(diagnostico_comun(relojes))
+    print(diagnostico_comun(relojes, "cotizaciones"))
+
+
+def cmd_hy(args):
+    lake = LakeParquet()
+    desde = _hace_horas(args.horas)
+    relojes = medir_relojes(lake.consultar, desde)  # misma ventana: así nuestra deriva se cancela
+    mids = mids_flujo(lake.consultar, desde)
+    if mids.empty:
+        print("No hay cambios del libro del websocket en esa ventana: captúralos con `python -m radar flujo`.")
+        return
+    print(f"Hayashi-Yoshida: {len(mids)} cambios del mid en las últimas {args.horas:g} h; {args.sustitutos} sustitutos.")
+    resultados = estudiar_hayashi_yoshida(mids, args.rango, args.paso, args.sustitutos,
+                                          incertidumbres=incertidumbres_desde_relojes(relojes, mids.exchange.unique()))
+    _mostrar_y_guardar(args, lake, "Lead-lag en milisegundos entre exchanges:", resultados, guardar_hayashi_yoshida,
+                       FUENTE_HY)
+
+
+def cmd_revalidar(args):
+    lake = LakeParquet()
+    _mostrar_y_guardar(args, lake, "Revalidación de los hallazgos de OFI, lead-lag y señales con datos posteriores:",
+                       revalidar_todo(lake.consultar, lake.fuentes()), guardar_revalidaciones_estudios,
+                       "revalidaciones")
+
+
+def cmd_registro(args):
+    lake = LakeParquet()
+    pruebas = registrar_pruebas(lake.consultar, lake.fuentes(), todas_las_ejecuciones=args.todas)
+    print(resumen_registro(pruebas))
+    _mostrar_y_guardar(args, lake, "Hallazgos de cada estudio frente a la corrección global:",
+                       [p for p in pruebas if p.hallazgo], lambda _, a, t: guardar_registro(pruebas, a, t),
+                       FUENTE_REGISTRO)
+
+
+def cmd_robustez(args):
+    lake = LakeParquet()
+    resultados = evaluar_robustez(lake.consultar, lake.fuentes())
+    print(resumen_robustez(resultados))
+    _mostrar_y_guardar(args, lake, "Robustez de cada hallazgo frente a los parámetros vecinos:", resultados,
+                       guardar_robustez, FUENTE_ROBUSTEZ)
 
 
 def cmd_estacionalidad(args):
@@ -336,6 +431,32 @@ def main(argv=None):
     p = sub.add_parser("markouts", help="Markouts de los trades y llenado de órdenes limit (datos del websocket)")
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
     p.set_defaults(func=cmd_markouts)
+    for nombre, ayuda, funcion in (
+            ("volatilidad", "Volatilidad realizada two-scale y signature plot", cmd_volatilidad),
+            ("revalidar", "Revalida con datos posteriores los hallazgos de OFI, lead-lag y señales", cmd_revalidar),
+            ("robustez", "Si cada hallazgo se sostiene con los parámetros vecinos", cmd_robustez)):
+        p = sub.add_parser(nombre, help=ayuda)
+        p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+        p.set_defaults(func=funcion)
+    p = sub.add_parser("liquidez", help="Spread efectivo y realizado, impacto y lambda de Kyle con los trades del websocket")
+    p.add_argument("--horas", type=float, default=6, help="Ventana hacia atrás, en horas (reconstruir el libro es lento)")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_liquidez)
+    p = sub.add_parser("registro", help="Registro de todas las pruebas y corrección por pruebas múltiples global")
+    p.add_argument("--todas", action="store_true", help="Contar todas las ejecuciones, no solo la última de cada estudio")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_registro)
+    p = sub.add_parser("relojes", help="Desfase y deriva entre la hora de cada exchange y la nuestra")
+    p.add_argument("--horas", type=float, default=24, help="Ventana hacia atrás, en horas")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_relojes)
+    p = sub.add_parser("hy", help="Lead-lag en milisegundos (Hayashi-Yoshida) con los cambios del libro del websocket")
+    p.add_argument("--horas", type=float, default=2, help="Ventana hacia atrás, en horas (el coste crece con ella)")
+    p.add_argument("--rango", type=float, default=5, help="Mayor adelanto probado, en segundos")
+    p.add_argument("--paso", type=float, default=0.01, help="Paso de la rejilla de adelantos, en segundos")
+    p.add_argument("--sustitutos", type=int, default=199, help="Series rotadas para el p-valor")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_hy)
     p = sub.add_parser("estacionalidad", help="Spread y profundidad por hora del día (UTC) y si dependen de la hora")
     p.add_argument("--banda", type=float, default=10, help="Banda en bps alrededor del mid para la profundidad")
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
@@ -349,6 +470,10 @@ def main(argv=None):
         parser.error(f"exchanges disponibles: {', '.join(EXCHANGES)}")
     if getattr(args, "segundos", 1) <= 0:
         parser.error("los segundos deben ser positivos")
+    if args.comando in ("relojes", "hy", "liquidez") and args.horas <= 0:
+        parser.error("las horas deben ser positivas")
+    if args.comando == "hy" and (args.rango <= 0 or args.paso <= 0 or args.paso > args.rango or args.sustitutos < 19):
+        parser.error("rango y paso positivos, paso no mayor que el rango y al menos 19 sustitutos")
     if getattr(args, "horizonte", 1) < 1:
         parser.error("el horizonte debe ser de al menos 1 ronda")
     if min(getattr(args, "retardos", (1,))) < 1:
