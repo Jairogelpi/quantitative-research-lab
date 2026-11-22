@@ -95,3 +95,41 @@ def test_lider_no_se_cuela_el_futuro_por_la_latencia(tmp_path):
     tabla = tabla_senales(lake.consultar, niveles_ofi=2, horizontes=(5,))
     r = {(a.exchange, a.senal): a for a in aporte_senales(tabla, minimo=500)}
     assert r[("kraken", "lider")].estado == "sin evidencia"
+
+
+def _lake_senales(ruta, mids):
+    """Un único exchange con una foto por segundo y los mids dados."""
+    lake, cot, des, libros = LakeParquet(ruta), [], [], []
+    for i, mid in enumerate(mids):
+        t = T0 + pd.Timedelta(seconds=i)
+        for ex, m in (("kraken", mid), ("okx", 100.0 + i * 0.001)):
+            cot.append({"exchange": ex, "solicitado_utc": t, "recibido_utc": t, "latencia_s": 0.1, "mid": m,
+                        "spread_bps": 1.0})
+            des.append({"exchange": ex, "recibido_utc": t, "banda_bps": 5.0, "imbalance": 0.5, "cubierta": True})
+            libros.append(Libro(ex, "BTC/EUR", tuple(Nivel(m - 0.005 - j, 1) for j in range(5)),
+                                tuple(Nivel(m + 0.005 + j, 1) for j in range(5)), t, t).a_fila(5))
+    lake.guardar(cot, "cotizaciones"), lake.guardar(des, "desequilibrios"), lake.guardar(libros, "libros")
+    return lake
+
+
+def test_volatilidad_de_contexto_robusta_y_solo_del_pasado(tmp_path):
+    """La volatilidad de contexto es la de `volatilidad_ts` (robusta al ruido) y cambiar el futuro no la mueve."""
+    from radar.analisis.volatilidad import volatilidad_ts
+    rng = np.random.default_rng(5)
+    mids = 100 * np.exp(np.cumsum(rng.normal(scale=1e-4, size=400)) + rng.normal(scale=2e-4, size=400))
+    otro_futuro = mids.copy()
+    otro_futuro[300:] *= np.exp(rng.normal(scale=1e-2, size=100))
+    a = tabla_senales(_lake_senales(tmp_path / "a", mids).consultar, horizontes=(5,))
+    b = tabla_senales(_lake_senales(tmp_path / "b", otro_futuro).consultar, horizontes=(5,))
+    va = a[a.exchange == "kraken"]["volatilidad_bps"].to_numpy()
+    vb = b[b.exchange == "kraken"]["volatilidad_bps"].to_numpy()
+    assert np.array_equal(va[:300], vb[:300], equal_nan=True) and not np.allclose(va[300:], vb[300:])
+    assert np.allclose(va, volatilidad_ts(np.arange(400.0), mids), equal_nan=True)
+    assert np.isfinite(va[-1])
+
+
+def test_la_fila_del_decaimiento_guarda_la_curva_para_la_robustez():
+    r = {d.senal: d for d in decaimiento(tabla_sintetica(), horizontes=(1, 2, 3, 5, 10), minimo=500)}
+    fila = r["lider"].a_fila()
+    assert fila["horizontes"] == [1, 2, 3, 5, 10] and len(fila["betas"]) == len(fila["ts"]) == 5
+    assert fila["ts"] == list(r["lider"].ts)

@@ -3,7 +3,11 @@
 Conceptos:
 - Tabla de señales: una fila por exchange y ronda con las señales candidatas (imbalance de una banda, OFI
   multinivel y el retorno de los OTROS exchanges en la ronda anterior, la señal del lead-lag), el contexto
-  (spread y volatilidad reciente) y el retorno futuro. Todo lo que es señal o contexto usa solo el pasado; la
+  (spread y volatilidad reciente) y el retorno futuro. La volatilidad de contexto es robusta al ruido de
+  microestructura: TSRV móvil (two-scale, Zhang, Mykland y Aït-Sahalia, 2005) de los últimos `VENTANA_VOL_S`
+  segundos hasta la foto actual, con K = `K_VOL` (`volatilidad.volatilidad_ts`), como desviación típica de un
+  retorno de una ronda en bps. La desviación típica ingenua de los retornos de 1 s suma el ruido y lo confunde
+  con volatilidad. Todo lo que es señal o contexto usa solo el pasado; la
   señal líder usa la ronda ANTERIOR porque las fotos de otro exchange en la misma ronda pueden llegar más tarde
   que la propia y contener su futuro (`senal_lider`).
 - Correlación entre señales (Spearman): si dos señales están muy correlacionadas, miden casi lo mismo y
@@ -39,21 +43,21 @@ from .calidad import FACTOR_HUECO
 from .imbalance import ALFA, MARGEN_S, _p_valor, _retardos
 from .leadlag import TOLERANCIA_ALINEACION, mids_alineados, retornos
 from .ofi import pares_ofi_retorno
+from .volatilidad import K_VOL, VENTANA_VOL_S, volatilidad_ts
 
 FUENTE_SENALES = "estudios_senales"
 SENALES = ("imbalance", "ofi", "lider")
 CONTEXTOS = ("spread_bps", "volatilidad_bps")
 HORIZONTE = 5
 HORIZONTES_DECAIMIENTO = (1, 2, 3, 5, 10, 20, 30, 60)
-VENTANA_VOL = 60
 MIN_FILAS = 500
 
 
 def tabla_senales(consultar: Callable[[str], pd.DataFrame], banda_bps: float = 5, niveles_ofi: int = 5,
                   horizontes=(HORIZONTE,), intervalo_s: float = INTERVALO_S) -> pd.DataFrame:
     """Una fila por exchange y ronda: imbalance, ofi, lider (retorno medio de los otros exchanges en la ronda
-    anterior), spread_bps, volatilidad_bps (desviación de los retornos propios de las últimas `VENTANA_VOL`
-    rondas), ret_pasado_bps y `ret_<k>` (retorno futuro a k rondas, bps)."""
+    anterior), spread_bps, volatilidad_bps (TSRV de los últimos `VENTANA_VOL_S` segundos hasta la foto, solo
+    pasado; bps por ronda), ret_pasado_bps y `ret_<k>` (retorno futuro a k rondas, bps)."""
     cot = consultar("""SELECT exchange, solicitado_utc, recibido_utc, mid, spread_bps FROM cotizaciones
                        ORDER BY exchange, recibido_utc""")
     imb = consultar(f"""SELECT exchange, recibido_utc, imbalance FROM desequilibrios
@@ -69,7 +73,7 @@ def tabla_senales(consultar: Callable[[str], pd.DataFrame], banda_bps: float = 5
         seguidas = np.r_[False, np.diff(t) <= FACTOR_HUECO * intervalo_s]
         propio = np.where(seguidas, (mid / np.r_[np.nan, mid[:-1]] - 1) * 1e4, np.nan)
         g["ret_pasado_bps"] = propio
-        g["volatilidad_bps"] = pd.Series(propio).rolling(VENTANA_VOL, min_periods=VENTANA_VOL // 2).std().to_numpy()
+        g["volatilidad_bps"] = volatilidad_ts(t, mid, VENTANA_VOL_S, K_VOL, intervalo_s)
         for k in horizontes:
             futuro = np.full(len(g), np.nan)
             if len(g) > k:
@@ -322,7 +326,9 @@ class Decaimiento:
 
     def a_fila(self) -> dict:
         fila = {"estudio": "decaimiento", "exchange": self.exchange, "senal": self.senal, "n": self.n,
-                "estado": self.estado, "conclusion": self.conclusion()}
+                "estado": self.estado, "conclusion": self.conclusion(),
+                # La curva completa: la robustez (`robustez.py`) y el registro de pruebas comparan horizontes vecinos.
+                "horizontes": list(self.horizontes), "betas": list(self.betas), "ts": list(self.ts)}
         if self.estado == "con efecto":
             fila.update(pico_rondas=self.pico[0], pico_bps=self.pico[1], tiempo_mitad_rondas=self.tiempo_mitad,
                         persistencia=self.persistencia)
