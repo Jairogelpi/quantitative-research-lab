@@ -15,6 +15,8 @@ Conceptos:
 - Trampa de la latencia: si las fotos de A llegan, de media, más tarde que las de B dentro de una ronda, la de A
   ya contiene parte del futuro de B y A PARECE liderar. Por eso se reporta la latencia mediana de cada uno y se
   prueban retardos de 2 y 3 rondas, mayores que cualquier desfase de latencia medido.
+- Final de los datos (`hasta_utc`): la última hora de solicitud que vio el estudio. La revalidación
+  (`revalidacion.py`) solo usa rondas posteriores.
 - Mismo rigor que el imbalance: descubrimiento en la primera mitad, confirmación en la segunda y
   Benjamini-Hochberg sobre todas las pruebas.
 """
@@ -111,6 +113,7 @@ class LeadLag:
     latencia_lider_s: float
     latencia_seguidor_s: float
     minimo: int
+    hasta_utc: pd.Timestamp = pd.NaT
 
     @property
     def estado(self) -> str:
@@ -169,7 +172,8 @@ def estudiar_lead_lag(alineados: pd.DataFrame, retardos=RETARDOS, minimo: int = 
     validos = [i for i, d in enumerate(borradores) if d["n"] >= minimo and not math.isnan(d["p_descubrimiento"])]
     ajustados = multipletests([borradores[i]["p_descubrimiento"] for i in validos], method="fdr_bh")[1] if validos else []
     p = dict(zip(validos, ajustados))
-    return [LeadLag(**d, p_ajustado=float(p.get(i, math.nan))) for i, d in enumerate(borradores)]
+    hasta = alineados["solicitado_utc"].max()
+    return [LeadLag(**d, p_ajustado=float(p.get(i, math.nan)), hasta_utc=hasta) for i, d in enumerate(borradores)]
 
 
 def matriz_correlaciones(alineados: pd.DataFrame, intervalo_s: float = INTERVALO_S) -> pd.DataFrame:

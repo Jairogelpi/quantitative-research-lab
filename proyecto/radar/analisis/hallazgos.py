@@ -10,6 +10,8 @@ Conceptos:
   · se cae: signo contrario con los datos nuevos.
   · pendiente: todavía no hay `min_por_grupo` rondas nuevas con imbalance positivo y con negativo.
 - Cada revalidación se guarda en la fuente `revalidaciones`: el historial de cada hallazgo a lo largo del tiempo.
+- `clasificar` es la regla común: la usan también las revalidaciones del OFI, el lead-lag y las señales
+  (`revalidacion.py`), cada una con su efecto y su mínimo de datos.
 """
 
 from __future__ import annotations
@@ -23,6 +25,16 @@ from .imbalance import CONFIRMADA, MIN_POR_GRUPO, T_CONFIRMACION, diferencia_hac
 
 FUENTE_REVALIDACIONES = "revalidaciones"
 SE_MANTIENE, SE_DEBILITA, SE_CAE, PENDIENTE = "se mantiene", "se debilita", "se cae", "pendiente"
+
+
+def clasificar(suficiente: bool, anterior: float, ahora: float, t: float) -> str:
+    """Estado de un hallazgo revalidado: pendiente sin datos suficientes; se cae si el efecto cambió de signo;
+    se mantiene si conserva el signo con |t| ≥ 2; si no, se debilita."""
+    if not suficiente:
+        return PENDIENTE
+    if np.sign(ahora) != np.sign(anterior):
+        return SE_CAE
+    return SE_MANTIENE if abs(t) >= T_CONFIRMACION else SE_DEBILITA
 
 
 @dataclass(frozen=True)
@@ -40,11 +52,8 @@ class Revalidacion:
 
     @property
     def estado(self) -> str:
-        if min(self.n_positivo, self.n_negativo) < self.min_por_grupo:
-            return PENDIENTE
-        if np.sign(self.diferencia) != np.sign(self.diferencia_anterior):
-            return SE_CAE
-        return SE_MANTIENE if abs(self.t) >= T_CONFIRMACION else SE_DEBILITA
+        return clasificar(min(self.n_positivo, self.n_negativo) >= self.min_por_grupo, self.diferencia_anterior,
+                          self.diferencia, self.t)
 
     def conclusion(self) -> str:
         cabecera = f"{self.exchange}, banda {self.banda_bps:g} bps, horizonte {self.horizonte_rondas}"

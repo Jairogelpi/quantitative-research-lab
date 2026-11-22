@@ -104,6 +104,7 @@ class ImpactoOFI:
     t_hac: float
     r2: float
     minimo: int
+    hasta_utc: pd.Timestamp = pd.NaT   # último intervalo que usó el estudio: la revalidación empieza después
 
     @property
     def estado(self) -> str:
@@ -129,13 +130,14 @@ def impacto_contemporaneo(pares: pd.DataFrame, minimo: int = MIN_PARES) -> list[
     unicos = pares.drop_duplicates(["exchange", "banda_bps", "recibido_utc"]).dropna(subset=["ret_actual_bps"])
     for (exchange, niveles), g in unicos.groupby(["exchange", "banda_bps"], sort=True):
         g = g.sort_values("recibido_utc")
+        hasta = g["recibido_utc"].iloc[-1]
         if len(g) < minimo or g["imbalance"].nunique() < 2:
-            resultados.append(ImpactoOFI(exchange, int(niveles), len(g), math.nan, math.nan, math.nan, minimo))
+            resultados.append(ImpactoOFI(exchange, int(niveles), len(g), math.nan, math.nan, math.nan, minimo, hasta))
             continue
         modelo = sm.OLS(g["ret_actual_bps"].to_numpy(), sm.add_constant(g["imbalance"].to_numpy())).fit(
             cov_type="HAC", cov_kwds={"maxlags": _retardos(len(g), 1)})
         resultados.append(ImpactoOFI(exchange, int(niveles), len(g), float(modelo.params[1]),
-                                     float(modelo.tvalues[1]), float(modelo.rsquared), minimo))
+                                     float(modelo.tvalues[1]), float(modelo.rsquared), minimo, hasta))
     return resultados
 
 
