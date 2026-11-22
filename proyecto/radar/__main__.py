@@ -7,6 +7,12 @@
     python -m radar simular [--exchange kraken] [--importe 100000] [--trozos 20] [--duracion 600]
                             [--impactos 0,1,5] [--urgencias 1,3] [--urgencia-adaptativa 1]
                             [--intensidades 0.5,1] [--no-guardar]
+    python -m radar estacionalidad [--banda 10] [--no-guardar]
+    python -m radar flujo [segundos] [--exchanges kraken,okx,bitvavo]
+    python -m radar markouts [--no-guardar]
+    python -m radar leadlag [--retardos 1,2,3] [--minimo 500] [--no-guardar]
+    python -m radar senales [--horizonte 5] [--minimo 500] [--no-guardar]
+    python -m radar ofi [--horizontes 1,5,10,30] [--niveles 1,5,10] [--minimo 200] [--no-guardar]
     python -m radar catalogo
     python -m radar consultar "SELECT exchange, median(spread_bps) FROM cotizaciones GROUP BY exchange"
 """
@@ -19,9 +25,17 @@ import sys
 import pandas as pd
 
 from radar.almacen import LakeParquet
+from radar.analisis.ofi import (FUENTE_ESTUDIOS_OFI, estudiar_ofi, guardar_estudio_ofi, impacto_contemporaneo,
+                               pares_ofi_retorno)
+from radar.analisis.leadlag import FUENTE_LEAD_LAG, estudiar_lead_lag, matriz_correlaciones, mids_alineados
+from radar.analisis.senales import (FUENTE_SENALES, HORIZONTES_DECAIMIENTO, aporte_senales, correlaciones,
+                                   decaimiento, interacciones, tabla_senales)
+from radar.analisis.markouts import FUENTE_MARKOUTS, estudiar_markouts
+from radar.analisis.estacionalidad import FUENTE_PERFILES, efecto_hora, medianas_diarias, perfil_horario
 from radar.analisis import (FUENTE_ESTUDIOS, HORIZONTES, PRECIOS, estudiar_imbalance, evaluar_calidad, guardar_estudio,
                             guardar_revalidaciones, leer_ultimo_estudio, pares_imbalance_retorno, revalidar)
 from radar.captura.capturador import capturar, foto_libro
+from radar.captura.flujo import capturar_flujo
 from radar.captura.exchanges import crear_fuentes
 from radar.configuracion import (BANDAS_BPS, CATALOGO, COMISIONES_TAKER, EXCHANGES, IMPORTE_COMPARACION,
                                  NIVELES_GUARDADOS, NIVELES_LIBRO, comisiones_taker)
@@ -38,6 +52,16 @@ def cmd_capturar(args):
     resumen = capturar(fuentes, LakeParquet(), args.segundos, importe_eur=importe, comisiones=comisiones_taker(),
                        niveles=args.niveles, bandas_bps=BANDAS_BPS, niveles_guardados=args.guardar_niveles)
     print(f"Terminado: {resumen['rondas']} rondas, {resumen['errores']} errores.")
+
+
+def cmd_flujo(args):
+    exchanges = args.exchanges.split(",")
+    print(f"Capturando el flujo del libro y los trades por websocket de {', '.join(exchanges)} durante "
+          f"{args.segundos:.0f} s…")
+    resumen = capturar_flujo(exchanges, LakeParquet(), args.segundos)
+    print(f"Terminado: {resumen['eventos_libro']} cambios del libro, {resumen['trades']} trades y {resumen['libros']} "
+          f"libros reconstruidos; {resumen['errores']} errores, {resumen['resincronizaciones']} resincronizaciones y "
+          f"{resumen['reconexiones']} reconexiones.")
 
 
 def cmd_costes(args):
@@ -127,6 +151,114 @@ def cmd_simular(args):
         print(f"Guardado en el lake: {len(resumenes)} resúmenes en '{FUENTE_SIMULACIONES}'.")
 
 
+def cmd_ofi(args):
+    lake = LakeParquet()
+    calidad = evaluar_calidad(lake.consultar, lake.fuentes())
+    pares = pares_ofi_retorno(lake.consultar, args.horizontes, args.niveles_ofi)
+    print(f"Order Flow Imbalance: {len(pares)} pares OFI → retorno, niveles {list(args.niveles_ofi)}, horizontes "
+          f"{list(args.horizontes)}.")
+    impactos = impacto_contemporaneo(pares)
+    print("\nImpacto contemporáneo (el OFI de un intervalo frente al movimiento del mid en ese mismo intervalo):")
+    for i in impactos:
+        print(f"  - {i.conclusion()}")
+    equilibrio = {ex: ((1 + c) / (1 - c) - 1) * 10_000 for ex, c in comisiones_taker().items()}
+    resultados = estudiar_ofi(pares, args.minimo, equilibrio, calidad)
+    print("\n¿Anticipa el OFI de ahora el retorno futuro?")
+    for r in resultados:
+        print(f"  - {r.conclusion()}")
+    if not args.no_guardar:
+        guardar_estudio_ofi(impactos, resultados, lake, pd.Timestamp.now(tz="UTC"))
+        print(f"\nGuardado en el lake: {len(impactos) + len(resultados)} resultados en '{FUENTE_ESTUDIOS_OFI}'.")
+
+
+def cmd_leadlag(args):
+    lake = LakeParquet()
+    alineados = mids_alineados(lake.consultar)
+    if alineados.empty:
+        print("No hay cotizaciones en el lake.")
+        return
+    print(f"Lead-lag entre exchanges: {len(alineados)} rondas con los tres mids alineados.")
+    print(f"\nCorrelación simultánea de los retornos por ronda:")
+    print(matriz_correlaciones(alineados).round(3).to_string())
+    resultados = estudiar_lead_lag(alineados, args.retardos, args.minimo)
+    print(f"\n¿Qué exchange se mueve primero?")
+    for r in resultados:
+        print(f"  - {r.conclusion()}")
+    if not args.no_guardar:
+        ahora = pd.Timestamp.now(tz="UTC")
+        lake.guardar([{"ejecutado_utc": ahora, "recibido_utc": ahora, **r.a_fila()} for r in resultados],
+                     FUENTE_LEAD_LAG)
+        print(f"\nGuardado en el lake: {len(resultados)} resultados en '{FUENTE_LEAD_LAG}'.")
+
+
+def cmd_senales(args):
+    lake = LakeParquet()
+    tabla = tabla_senales(lake.consultar, horizontes=sorted({args.horizonte, *HORIZONTES_DECAIMIENTO}))
+    if tabla.empty:
+        print("No hay cotizaciones en el lake.")
+        return
+    print(f"Señales: imbalance (banda 5 bps), OFI (5 niveles) y líder (retorno de los otros exchanges en la "
+          f"ronda anterior); {len(tabla)} filas.")
+    for exchange in sorted(tabla.exchange.unique()):
+        print(f"\nCorrelación (Spearman) entre señales y contexto en {exchange}:")
+        print(correlaciones(tabla, exchange).round(2).to_string())
+    resultados = (aporte_senales(tabla, args.horizonte, args.minimo) + interacciones(tabla, args.horizonte, args.minimo)
+                  + decaimiento(tabla, minimo=args.minimo))
+    for titulo, tipo in (("¿Qué señal aporta información propia?", "aporte"),
+                         ("¿Funciona distinto con el spread o la volatilidad altos?", "interaccion"),
+                         ("¿Cuánto dura cada señal?", "decaimiento")):
+        print(f"\n{titulo}")
+        for r in resultados:
+            if r.a_fila()["estudio"] == tipo:
+                print(f"  - {r.conclusion()}")
+    if not args.no_guardar:
+        ahora = pd.Timestamp.now(tz="UTC")
+        lake.guardar([{"ejecutado_utc": ahora, "recibido_utc": ahora, **r.a_fila()} for r in resultados],
+                     FUENTE_SENALES)
+        print(f"\nGuardado en el lake: {len(resultados)} resultados en '{FUENTE_SENALES}'.")
+
+
+def cmd_markouts(args):
+    lake = LakeParquet()
+    if not {"trades", "libros_flujo"} <= set(lake.fuentes()):
+        print("Faltan trades o libros del websocket: captúralos con `python -m radar flujo`.")
+        return
+    markouts, llenados = estudiar_markouts(lake.consultar)
+    print("Markout de los trades (cuánto se movió el mid después, desde el que tomó liquidez):")
+    for m in markouts:
+        print(f"  - {m.conclusion()}")
+    print()
+    print("Órdenes limit hipotéticas en el mejor precio (¿se habrían llenado y con qué markout?):")
+    for l in llenados:
+        print(f"  - {l.conclusion()}")
+    if not args.no_guardar:
+        ahora = pd.Timestamp.now(tz="UTC")
+        resultados = markouts + llenados
+        lake.guardar([{"ejecutado_utc": ahora, "recibido_utc": ahora, **r.a_fila()} for r in resultados],
+                     FUENTE_MARKOUTS)
+        print()
+        print(f"Guardado en el lake: {len(resultados)} resultados en '{FUENTE_MARKOUTS}'.")
+
+
+def cmd_estacionalidad(args):
+    lake = LakeParquet()
+    perfil = perfil_horario(lake.consultar, args.banda)
+    if perfil.empty:
+        print("No hay cotizaciones en el lake.")
+        return
+    with pd.option_context("display.width", 200, "display.max_rows", 100):
+        print(perfil.round(4).to_string(index=False))
+    diario = medianas_diarias(lake.consultar, args.banda)
+    efectos = efecto_hora(diario, "spread_bps") + efecto_hora(diario, "profundidad_btc")
+    print("\nConclusiones del sistema:")
+    for e in efectos:
+        print(f"  - {e.conclusion()}")
+    if not args.no_guardar:
+        ahora = pd.Timestamp.now(tz="UTC")
+        lake.guardar([{"ejecutado_utc": ahora, "recibido_utc": ahora, **e.a_fila()} for e in efectos], FUENTE_PERFILES)
+        print(f"Guardado en el lake: {len(efectos)} conclusiones en '{FUENTE_PERFILES}'.")
+
+
 def cmd_catalogo(args):
     print(f"Vistas: {LakeParquet().crear_catalogo()} → {CATALOGO}")
 
@@ -150,6 +282,10 @@ def main(argv=None):
                    help="Niveles por lado del libro que se guardan (0 = no guardar libros)")
     p.add_argument("--sin-comparar", action="store_true", help="No guardar comparaciones ni conclusiones")
     p.set_defaults(func=cmd_capturar)
+    p = sub.add_parser("flujo", help="Captura por websocket los cambios del libro (con secuencia y checksum) y los trades")
+    p.add_argument("segundos", nargs="?", type=float, default=60)
+    p.add_argument("--exchanges", type=str, default=",".join(EXCHANGES))
+    p.set_defaults(func=cmd_flujo)
     p = sub.add_parser("costes", help="Coste de una ida y vuelta barriendo el libro y punto de equilibrio, con datos de ahora")
     p.add_argument("--importe", type=float, default=IMPORTE_COMPARACION)
     p.add_argument("--exchanges", default=",".join(EXCHANGES))
@@ -177,13 +313,48 @@ def main(argv=None):
                    help="Intensidades del adaptativo (cuánto adelanta o retrasa con el imbalance); vacío = no simular")
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
     p.set_defaults(func=cmd_simular)
+    p = sub.add_parser("ofi", help="Order Flow Imbalance: impacto en el precio y poder predictivo")
+    p.add_argument("--horizontes", type=lambda t: tuple(int(x) for x in t.split(",")), default=HORIZONTES,
+                   help="Rondas hacia delante del retorno futuro, separadas por comas")
+    p.add_argument("--niveles", dest="niveles_ofi", type=lambda t: tuple(int(x) for x in t.split(",")),
+                   default=(1, 5, 10),
+                   help="Niveles por lado del OFI multinivel, separados por comas")
+    p.add_argument("--minimo", type=int, default=200, help="Rondas mínimas por grupo y mitad para concluir")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_ofi)
+    p = sub.add_parser("leadlag", help="Qué exchange se mueve primero (Granger, lead-lag ratio, correlaciones)")
+    p.add_argument("--retardos", type=lambda t: tuple(int(x) for x in t.split(",")), default=(1, 2, 3),
+                   help="Rondas de adelanto que se prueban, separadas por comas")
+    p.add_argument("--minimo", type=int, default=500, help="Rondas mínimas por mitad para concluir")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_leadlag)
+    p = sub.add_parser("senales", help="Correlaciones, aporte propio, interacciones y decaimiento de las señales")
+    p.add_argument("--horizonte", type=int, default=5, help="Rondas del retorno futuro del aporte y las interacciones")
+    p.add_argument("--minimo", type=int, default=500, help="Filas mínimas por mitad para concluir")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_senales)
+    p = sub.add_parser("markouts", help="Markouts de los trades y llenado de órdenes limit (datos del websocket)")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_markouts)
+    p = sub.add_parser("estacionalidad", help="Spread y profundidad por hora del día (UTC) y si dependen de la hora")
+    p.add_argument("--banda", type=float, default=10, help="Banda en bps alrededor del mid para la profundidad")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_estacionalidad)
     sub.add_parser("catalogo", help="Crea data/quantlab.duckdb para DBeaver").set_defaults(func=cmd_catalogo)
     p = sub.add_parser("consultar", help="Ejecuta SQL sobre el lake")
     p.add_argument("sql")
     p.set_defaults(func=cmd_consultar)
     args = parser.parse_args(argv)
+    if args.comando == "flujo" and not set(args.exchanges.split(",")) <= set(EXCHANGES):
+        parser.error(f"exchanges disponibles: {', '.join(EXCHANGES)}")
     if getattr(args, "segundos", 1) <= 0:
         parser.error("los segundos deben ser positivos")
+    if getattr(args, "horizonte", 1) < 1:
+        parser.error("el horizonte debe ser de al menos 1 ronda")
+    if min(getattr(args, "retardos", (1,))) < 1:
+        parser.error("los retardos deben ser de al menos 1 ronda")
+    if min(getattr(args, "niveles_ofi", (1,))) < 1:
+        parser.error("los niveles del OFI deben ser al menos 1")
     if min(getattr(args, "horizontes", (1,))) < 1 or getattr(args, "minimo", 2) < 2:
         parser.error("los horizontes deben ser al menos 1 y el mínimo al menos 2")
     if getattr(args, "guardar_niveles", 0) < 0:

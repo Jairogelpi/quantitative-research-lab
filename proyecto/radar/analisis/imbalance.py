@@ -96,6 +96,7 @@ class ResultadoImbalance:
     ic: float
     quintiles: list
     equilibrio_bps: float | None
+    senal: str = "imbalance"   # otra señal (p. ej. "ofi") reutiliza el mismo método; banda_bps pasa a ser su parámetro
 
     @property
     def suficiente(self) -> bool:
@@ -144,13 +145,15 @@ class ResultadoImbalance:
         return self.movimiento_bps > self.equilibrio_bps
 
     def conclusion(self) -> str:
-        cabecera = f"{self.exchange}, banda {self.banda_bps:g} bps, horizonte {self.horizonte_rondas}"
+        parametro = (f"banda {self.banda_bps:g} bps" if self.senal == "imbalance"
+                     else f"{self.senal} {self.banda_bps:g} niveles")
+        cabecera = f"{self.exchange}, {parametro}, horizonte {self.horizonte_rondas}"
         if self.precio_referencia != "mid":
             cabecera += f", {self.precio_referencia}"
         if self.estado == CALIDAD_INSUFICIENTE:
             return f"{cabecera}: calidad de datos insuficiente ({self.motivo_calidad}); no se concluye."
         if self.estado == INSUFICIENTE:
-            return (f"{cabecera}: datos insuficientes (hacen falta {self.min_por_grupo} rondas con imbalance positivo y "
+            return (f"{cabecera}: datos insuficientes (hacen falta {self.min_por_grupo} rondas con {self.senal} positivo y "
                     f"{self.min_por_grupo} con negativo en cada mitad; hay {self.n_minimo_positivo} y "
                     f"{self.n_minimo_negativo} en la mitad menor).")
         controles = "sobrevive a los controles" if self.sobrevive_controles else "no sobrevive a los controles"
@@ -242,7 +245,8 @@ def _ventanas(g: pd.DataFrame, horizonte: int, signo: float) -> tuple[int, int]:
 
 
 def estudiar_imbalance(pares: pd.DataFrame, min_por_grupo: int = MIN_POR_GRUPO, equilibrio_bps: dict | None = None,
-                       calidad: dict | None = None, precio: str = "mid") -> list[ResultadoImbalance]:
+                       calidad: dict | None = None, precio: str = "mid", senal: str = "imbalance"
+                       ) -> list[ResultadoImbalance]:
     """Un resultado por exchange, banda y horizonte.
 
     `pares`: exchange, banda_bps, horizonte_rondas, recibido_utc, imbalance, ret_bps (y, para los controles,
@@ -272,7 +276,7 @@ def estudiar_imbalance(pares: pd.DataFrame, min_por_grupo: int = MIN_POR_GRUPO, 
             ret_negativo_confirmacion=float(conf.ret_bps[conf.imbalance < 0].mean()) if len(conf) else math.nan,
             ventanas_mismo_signo=mismo, ventanas_total=total, coef_controlado=coef, t_controlado=t_ctrl,
             ic=float(g.imbalance.corr(g.ret_bps, method="spearman")) if len(g) > 2 else math.nan,
-            quintiles=_quintiles(g), equilibrio_bps=(equilibrio_bps or {}).get(exchange)))
+            quintiles=_quintiles(g), equilibrio_bps=(equilibrio_bps or {}).get(exchange), senal=senal))
 
     validos = [i for i, b in enumerate(borradores)
                if not b["motivo_calidad"] and min(b["n_minimo_positivo"], b["n_minimo_negativo"]) >= min_por_grupo
