@@ -27,6 +27,10 @@
     python -m radar prediccion [--fuente kraken_historico] [--intervalos 86400,3600] [--no-guardar]
     python -m radar prediccion --abrir-muestra-guardada   (UNA sola vez: evalúa en datos desde 2025 lo que sobrevivió)
     python -m radar arbitraje [--horas 6] [--no-guardar]
+    python -m radar historico-derivados [--dias 365]
+    python -m radar derivados [--no-guardar]
+    python -m radar opciones --capturar [--sin-griegas] [--max-tickers 120]
+    python -m radar opciones [--no-guardar]
     python -m radar protocolo --estado | --registrar | --evaluar [--seguimiento] | --desarrollo [--horas 3]
     python -m radar leadlag [--retardos 1,2,3] [--minimo 500] [--no-guardar]
     python -m radar senales [--horizonte 5] [--minimo 500] [--no-guardar]
@@ -65,6 +69,11 @@ from radar.analisis.comparacion_velas import FUENTE_COMPARACION, comparar_velas,
 from radar.captura import historico_kraken
 from radar.captura.exchanges import kraken_historico
 from radar.analisis import prediccion
+from radar.analisis.derivados import FUENTE_ESTUDIO as FUENTE_DERIVADOS
+from radar.analisis.derivados import estudiar_derivados_lake, guardar_estudio_derivados
+from radar.analisis.opciones import FUENTE_OPCIONES, estudiar_opciones_lake, guardar_estudio_opciones
+from radar.captura.historico_derivados import actualizar_derivados, resumen_derivados
+from radar.captura.opciones import capturar_opciones, resumen_captura
 from radar.analisis import protocolo_leadlag as protocolo
 from radar.analisis.arbitraje import FUENTE_ARBITRAJE, estudiar_arbitraje, guardar_arbitraje
 from radar.analisis.robustez import FUENTE_ROBUSTEZ, evaluar_robustez, guardar_robustez, resumen_robustez
@@ -493,6 +502,38 @@ def cmd_protocolo(args):
         print(f"No se hace: {error}")
 
 
+def cmd_historico_derivados(args):
+    lake = LakeParquet()
+    print(f"Histórico público de perpetuos (OKX y Kraken Futures), últimos {args.dias} días…")
+    for exchange, resultado in actualizar_derivados(lake, dias=args.dias).items():
+        print(f"  - {exchange}: {resultado}")
+    for fila in resumen_derivados(lake.consultar):
+        print(f"  · {fila}")
+
+
+def cmd_derivados(args):
+    lake = LakeParquet()
+    if "derivados_funding" not in lake.fuentes():
+        print("No hay datos de perpetuos: descárgalos con `python -m radar historico-derivados`.")
+        return
+    _mostrar_y_guardar(args, lake, "Perpetuos: basis, funding, carry de la cobertura, open interest y liquidaciones:",
+                       estudiar_derivados_lake(lake.consultar), guardar_estudio_derivados, FUENTE_DERIVADOS)
+
+
+def cmd_opciones(args):
+    lake = LakeParquet()
+    if args.capturar:
+        maximo = None if args.max_tickers == "todos" else int(args.max_tickers)
+        cadena, _ = capturar_opciones(lake, griegas=not args.sin_griegas, max_tickers=maximo)
+        print(resumen_captura(cadena))
+        return
+    if "opciones_cadena" not in lake.fuentes():
+        print("No hay cadena de opciones: captúrala con `python -m radar opciones --capturar`.")
+        return
+    _mostrar_y_guardar(args, lake, "Opciones BTC de Deribit (última foto de la cadena):",
+                       estudiar_opciones_lake(lake.consultar), guardar_estudio_opciones, FUENTE_OPCIONES)
+
+
 def cmd_estacionalidad(args):
     lake = LakeParquet()
     perfil = perfil_horario(lake.consultar, args.banda)
@@ -654,6 +695,18 @@ def main(argv=None):
     p.add_argument("--huella", help="Hash del protocolo (por defecto, el de Kraken)")
     p.add_argument("--horas", type=float, default=3, help="Con --desarrollo: ventana hacia atrás, en horas")
     p.set_defaults(func=cmd_protocolo)
+    p = sub.add_parser("historico-derivados", help="Histórico público de funding, precios, OI y liquidaciones de perpetuos")
+    p.add_argument("--dias", type=int, default=365, help="Días hacia atrás (OKX solo da 3 meses de funding y 60 días de OI)")
+    p.set_defaults(func=cmd_historico_derivados)
+    p = sub.add_parser("derivados", help="Basis, funding, carry de la cobertura, open interest y liquidaciones")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_derivados)
+    p = sub.add_parser("opciones", help="Opciones BTC de Deribit: captura de la cadena, Black-76, griegas, paridad y sonrisa")
+    p.add_argument("--capturar", action="store_true", help="Captura una foto de la cadena completa")
+    p.add_argument("--sin-griegas", action="store_true", help="Con --capturar: sin pedir los tickers (más rápido)")
+    p.add_argument("--max-tickers", default="120", help="Con --capturar: tickers cercanos al dinero a pedir, o 'todos'")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_opciones)
     p = sub.add_parser("ofi-eventos", help="OFI evento a evento (Cont-Kukanov-Stoikov) con los cambios del libro")
     p.add_argument("--horas", type=float, default=6, help="Ventana hacia atrás, en horas (reconstruir el libro es lento)")
     p.add_argument("--intervalos", type=lambda t: tuple(float(x) for x in t.split(",")), default=(1.0, 10.0),
@@ -694,6 +747,11 @@ def main(argv=None):
         parser.error("las horas deben ser positivas")
     if args.comando == "hy" and (args.rango <= 0 or args.paso <= 0 or args.paso > args.rango or args.sustitutos < 19):
         parser.error("rango y paso positivos, paso no mayor que el rango y al menos 19 sustitutos")
+    if args.comando == "historico-derivados" and args.dias < 1:
+        parser.error("los días deben ser al menos 1")
+    if args.comando == "opciones" and args.max_tickers != "todos" and (not args.max_tickers.isdigit()
+                                                                       or int(args.max_tickers) < 1):
+        parser.error("--max-tickers debe ser un número positivo o 'todos'")
     if args.comando == "prediccion" and min(args.intervalos) <= 0:
         parser.error("los intervalos deben ser positivos")
     if args.comando == "velas" and (args.horas <= 0 or min(args.intervalos) <= 0):

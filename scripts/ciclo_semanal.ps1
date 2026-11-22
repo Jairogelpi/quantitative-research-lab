@@ -31,6 +31,10 @@ $pasos = @(
     @("respuesta", "--horas", "168"),       # Fase 3: función de respuesta de Bouchaud
     @("arbitraje", "--horas", "24"),        # Fase 6: caro (unos 3 min por cada 6 h de flujo)
     @("velas", "--horas", "168"),           # Fase 4: velas propias de la semana
+    @("historico-derivados", "--dias", "14"),  # Fase 7: OKX solo guarda 3 meses de funding y 60 días de OI
+    @("derivados"),
+    @("opciones", "--capturar"),            # Fase 7: una foto semanal de la cadena (~2 min)
+    @("opciones"),
     @("historico-kraken"),                  # Fase 4: lo nuevo de Kraken (idempotente)
     @("comparar-velas"),                    # Fase 4: propias frente a oficiales
     @("retornos", "--fuente", "propia"),
@@ -41,9 +45,10 @@ $pasos = @(
 
 $fallos = 0
 Push-Location $proyecto
-$soloDatos = @("velas", "historico-kraken")  # actualizan datos (idempotentes) y no tienen --no-guardar
+# Pasos que solo actualizan datos (idempotentes) y no tienen --no-guardar: en modo prueba se saltan.
+$soloDatos = @("velas", "historico-kraken", "historico-derivados", "opciones --capturar")
 foreach ($paso in $pasos) {
-    if ($Prueba -and $soloDatos -contains $paso[0]) {
+    if ($Prueba -and ($soloDatos -contains $paso[0] -or $soloDatos -contains ($paso -join " "))) {
         "{0:o} --- {1} (se salta en modo prueba: solo actualiza datos)" -f (Get-Date).ToUniversalTime(), $paso[0] | Out-File -Append -Encoding utf8 $log
         continue
     }
