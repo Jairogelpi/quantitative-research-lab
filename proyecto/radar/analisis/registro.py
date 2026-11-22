@@ -45,12 +45,14 @@ FUENTE_REGISTRO = "registro_pruebas"
 FUENTES_ADICIONALES = ("perfiles_horarios",)
 FUENTES_EXCLUIDAS = ("estudios_robustez",)
 COLUMNAS_P = ("p_descubrimiento", "p_valor", "p_sustitutos")  # p_sustitutos: Hayashi-Yoshida (rotaciones)
-COLUMNAS_T = ("t_descubrimiento", "t_hac", "t_conjunto", "t_interaccion", "t")
+COLUMNAS_T = ("t_descubrimiento", "t_hac", "t_conjunto", "t_interaccion", "t", "t_r1")  # t_r1: R(1) de Bouchaud
 NO_PROBADAS = {"datos insuficientes", "calidad de datos insuficiente", "pendiente"}
 HALLAZGOS = {"confirmada", "aporta información propia", "explica el precio", "depende de la hora", "con efecto",
              "los takers aciertan (selección adversa para el maker)", "los takers pierden",
-             "impacto significativo"}  # lambda de Kyle: el volumen neto mueve el precio
-PARAMETROS = ("senal", "precio_referencia", "contexto", "variable", "base")
+             "impacto significativo",  # lambda de Kyle: el volumen neto mueve el precio
+             "el lado neto paga sobre el mid", "el lado neto mejora el mid",  # VWAP frente al mid (presión)
+             "impacto permanente", "impacto mayormente transitorio", "impacto mixto"}  # respuesta de Bouchaud
+PARAMETROS = ("senal", "precio_referencia", "contexto", "variable", "base", "medida", "relacion")
 PREFIJOS_PARAMETRO = ("banda_", "niveles", "horizonte_", "retardo_", "ventana_", "frecuencia_", "escala_",
                       "intervalo_", "espera_")
 

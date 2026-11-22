@@ -135,3 +135,21 @@ def test_cada_intervalo_de_la_lambda_es_una_hipotesis_distinta(tmp_path):
     lake.guardar([fila(exchange="kraken", intervalo_s=5, t=9.9, estado="impacto significativo"),
                   fila(exchange="kraken", intervalo_s=60, t=2.0, estado="impacto significativo")], "estudios_liquidez")
     assert len(registrar_pruebas(lake.consultar, lake.fuentes())) == 2
+
+
+def test_los_estudios_de_la_fase_3_entran_completos_en_la_familia(tmp_path):
+    """Presión guarda varias pruebas por exchange e intervalo (medida y relación); VWAP y la respuesta de Bouchaud
+    tienen sus propios estados de hallazgo, y la respuesta guarda su t como `t_r1`."""
+    lake = LakeParquet(tmp_path)
+    relacion = [fila(estudio="presion_relacion", exchange="kraken", intervalo_s=1, medida=m, relacion=r, t=3.0,
+                     estado="confirmada") for m in ("volumen", "numero") for r in ("contemporanea", "predictiva")]
+    vwap = [fila(estudio="presion_vwap", exchange="okx", intervalo_s=1, t=6.0, estado="el lado neto paga sobre el mid")]
+    lake.guardar(relacion + vwap, "estudios_presion")
+    lake.guardar([fila(estudio="respuesta_precio", exchange="bitvavo", t_r1=8.0, estado="impacto mixto")],
+                 "estudios_respuesta")
+    pruebas = registrar_pruebas(lake.consultar, lake.fuentes())
+    por_estudio = {}
+    for p in pruebas:
+        por_estudio.setdefault(p.estudio, []).append(p)
+    assert len(por_estudio["presion_relacion"]) == 4
+    assert por_estudio["presion_vwap"][0].hallazgo and por_estudio["respuesta_precio"][0].hallazgo

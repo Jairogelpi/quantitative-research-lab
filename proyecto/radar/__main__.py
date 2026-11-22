@@ -17,6 +17,9 @@
     python -m radar revalidar [--no-guardar]
     python -m radar registro [--todas] [--no-guardar]
     python -m radar robustez [--no-guardar]
+    python -m radar ofi-eventos [--horas 6] [--intervalos 1,10] [--minimo 200] [--no-guardar]
+    python -m radar presion [--horas 6] [--no-guardar]
+    python -m radar respuesta [--horas 6] [--no-guardar]
     python -m radar leadlag [--retardos 1,2,3] [--minimo 500] [--no-guardar]
     python -m radar senales [--horizonte 5] [--minimo 500] [--no-guardar]
     python -m radar ofi [--horizontes 1,5,10,30] [--niveles 1,5,10] [--minimo 200] [--no-guardar]
@@ -45,6 +48,9 @@ from radar.analisis.hayashi_yoshida import (FUENTE_HY, estudiar_hayashi_yoshida,
                                             incertidumbres_desde_relojes, mids_flujo)
 from radar.analisis.revalidacion import guardar_estudio_senales, guardar_revalidaciones_estudios, revalidar_todo
 from radar.analisis.registro import FUENTE_REGISTRO, guardar_registro, registrar_pruebas, resumen_registro
+from radar.analisis.ofi_eventos import FUENTE_OFI_EVENTOS, estudio_ofi_eventos, guardar_ofi_eventos
+from radar.analisis.presion import FUENTE_PRESION, estudiar_presion, guardar_estudio_presion
+from radar.analisis.respuesta import FUENTE_RESPUESTA, estudiar_respuesta, guardar_estudio_respuesta
 from radar.analisis.robustez import FUENTE_ROBUSTEZ, evaluar_robustez, guardar_robustez, resumen_robustez
 from radar.analisis.estacionalidad import FUENTE_PERFILES, efecto_hora, medianas_diarias, perfil_horario
 from radar.analisis import (FUENTE_ESTUDIOS, HORIZONTES, PRECIOS, estudiar_imbalance, evaluar_calidad, guardar_estudio,
@@ -335,6 +341,42 @@ def cmd_robustez(args):
                        guardar_robustez, FUENTE_ROBUSTEZ)
 
 
+def _hay_flujo(lake) -> bool:
+    if {"trades", "eventos_libro"} <= set(lake.fuentes()):
+        return True
+    print("Faltan trades o cambios del libro del websocket: captúralos con `python -m radar flujo`.")
+    return False
+
+
+def cmd_ofi_eventos(args):
+    lake = LakeParquet()
+    if "eventos_libro" not in lake.fuentes():
+        print("No hay cambios del libro del websocket: captúralos con `python -m radar flujo`.")
+        return
+    impactos, predicciones = estudio_ofi_eventos(lake.consultar, _hace_horas(args.horas), intervalos_s=args.intervalos,
+                                                 minimo=args.minimo, con_fotos="libros" in lake.fuentes())
+    _mostrar_y_guardar(args, lake, f"OFI evento a evento, Cont-Kukanov-Stoikov (últimas {args.horas:g} h):",
+                       impactos + predicciones,
+                       lambda r, a, t: guardar_ofi_eventos(impactos, predicciones, a, t), FUENTE_OFI_EVENTOS)
+
+
+def cmd_presion(args):
+    lake = LakeParquet()
+    if _hay_flujo(lake):
+        _mostrar_y_guardar(args, lake, f"Presión compradora y vendedora: trade imbalance, CVD, intensidad, VWAP y "
+                                       f"exposición (últimas {args.horas:g} h):",
+                           estudiar_presion(lake.consultar, _hace_horas(args.horas)), guardar_estudio_presion,
+                           FUENTE_PRESION)
+
+
+def cmd_respuesta(args):
+    lake = LakeParquet()
+    if _hay_flujo(lake):
+        _mostrar_y_guardar(args, lake, f"Respuesta del precio a un trade, Bouchaud (últimas {args.horas:g} h):",
+                           estudiar_respuesta(lake.consultar, desde_utc=_hace_horas(args.horas)),
+                           guardar_estudio_respuesta, FUENTE_RESPUESTA)
+
+
 def cmd_estacionalidad(args):
     lake = LakeParquet()
     perfil = perfil_horario(lake.consultar, args.banda)
@@ -442,6 +484,20 @@ def main(argv=None):
     p.add_argument("--horas", type=float, default=6, help="Ventana hacia atrás, en horas (reconstruir el libro es lento)")
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
     p.set_defaults(func=cmd_liquidez)
+    for nombre, ayuda, funcion in (
+            ("presion", "Trade imbalance, CVD, intensidad, VWAP frente al mid y exposición neta y bruta", cmd_presion),
+            ("respuesta", "Función de respuesta de Bouchaud: impacto permanente y transitorio de un trade", cmd_respuesta)):
+        p = sub.add_parser(nombre, help=ayuda)
+        p.add_argument("--horas", type=float, default=6, help="Ventana hacia atrás, en horas (reconstruir el libro es lento)")
+        p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+        p.set_defaults(func=funcion)
+    p = sub.add_parser("ofi-eventos", help="OFI evento a evento (Cont-Kukanov-Stoikov) con los cambios del libro")
+    p.add_argument("--horas", type=float, default=6, help="Ventana hacia atrás, en horas (reconstruir el libro es lento)")
+    p.add_argument("--intervalos", type=lambda t: tuple(float(x) for x in t.split(",")), default=(1.0, 10.0),
+                   help="Segundos de cada intervalo de agregación, separados por comas")
+    p.add_argument("--minimo", type=int, default=200, help="Intervalos mínimos para concluir")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_ofi_eventos)
     p = sub.add_parser("registro", help="Registro de todas las pruebas y corrección por pruebas múltiples global")
     p.add_argument("--todas", action="store_true", help="Contar todas las ejecuciones, no solo la última de cada estudio")
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
@@ -470,10 +526,12 @@ def main(argv=None):
         parser.error(f"exchanges disponibles: {', '.join(EXCHANGES)}")
     if getattr(args, "segundos", 1) <= 0:
         parser.error("los segundos deben ser positivos")
-    if args.comando in ("relojes", "hy", "liquidez") and args.horas <= 0:
+    if args.comando in ("relojes", "hy", "liquidez", "presion", "respuesta", "ofi-eventos") and args.horas <= 0:
         parser.error("las horas deben ser positivas")
     if args.comando == "hy" and (args.rango <= 0 or args.paso <= 0 or args.paso > args.rango or args.sustitutos < 19):
         parser.error("rango y paso positivos, paso no mayor que el rango y al menos 19 sustitutos")
+    if args.comando == "ofi-eventos" and (min(args.intervalos) <= 0 or args.minimo < 2):
+        parser.error("los intervalos deben ser positivos y el mínimo al menos 2")
     if getattr(args, "horizonte", 1) < 1:
         parser.error("el horizonte debe ser de al menos 1 ronda")
     if min(getattr(args, "retardos", (1,))) < 1:

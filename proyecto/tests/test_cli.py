@@ -23,6 +23,9 @@ from radar.__main__ import main  # falla si __main__.py no compila
     ["liquidez", "--horas", "0"],
     ["hy", "--paso", "0"],
     ["hy", "--sustitutos", "5"],
+    ["presion", "--horas", "0"],
+    ["respuesta", "--horas", "0"],
+    ["ofi-eventos", "--intervalos", "0"],
     ["ofi", "--horizontes", "0"],
     ["simular", "--urgencia-adaptativa", "-1"],
 ])
