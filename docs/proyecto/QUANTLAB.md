@@ -108,7 +108,12 @@ Reúne todo lo documentado en `docs/`: los conceptos de cada fase, dónde están
 - **Conceptos:** vela OHLCV · volumen monetario y VWAP de la vela · velas vacías y de frontera · retorno simple, logarítmico y acumulado · segmentos sin huecos · volatilidad móvil y realizada · anualización · retorno futuro sin mirar el futuro.
 - **Documentos:** [series temporales](../conceptos/series_temporales.md) · [conclusiones P04](../conclusiones/P04_time_series.md) · [aprendizajes P04](../aprendizajes/P04_time_series.md).
 - **Ya sabemos:** el mercado real fue unas 4 veces más volátil por minuto que la simulación (8,24 frente a 2,02 bps). Una consulta REST de 1.000 trades cubre solo minutos u horas.
-- **Abierto:** histórico largo y continuo (Ingeniería de datos).
+- **Fuentes (decisión del 22-11-2026: mezcla):** velas propias desde los trades del websocket (`python -m radar velas`) para lo que se opera, y el historial oficial de Kraken (`python -m radar historico-kraken`) para el histórico largo. A escala de minutos u horas, nuestra latencia (~0,3 s) no importa.
+  - **Velas propias:** con la hora del exchange; las vacías no inventan precio (NaN); una vela es completa si terminó y la captura cubrió al menos el 99 % de su intervalo (cada reinicio horario pierde 11–18 s). El latido de la captura (los libros de cada segundo) separa un mercado quieto de un corte.
+  - **Kraken:** el archivo OHLCVT completo (9,5 GB) se lee por partes con peticiones HTTP Range, solo BTC/EUR (~3 MB, ~20 s); cubre del 10-09-2013 al 30-09-2026. La API completa las 720 velas más recientes de cada intervalo. Hay un hueco horario del 1 al 23 de octubre de 2026 hasta que Kraken publique el archivo del cuarto trimestre (o se rellene con trades).
+  - **Comparación** (`python -m radar comparar-velas`): las velas propias de Kraken coinciden al 100 % con las oficiales en 1 y 5 minutos (apertura, máximo, mínimo, cierre, volumen y número de trades); la única diferencia es el redondeo del VWAP oficial a 0,1 €.
+- **Ya sabemos (13 años de Kraken, `python -m radar retornos --fuente kraken_historico`):** volatilidad anual del 69,9 % con velas diarias y del 78,8 % con horarias; colas gruesas (extremos 6–7 veces más frecuentes que en la normal; curtosis horaria de 290, probablemente inflada por los primeros años sin liquidez); fuerte agrupamiento de la volatilidad (ρ₁ de |r| +0,27 diario, +0,39 horario); cambios de régimen (calma el 28–31 % del tiempo, agitación el 18–25 %). Con 1 minuto propio (~6,5 h): 58–72 % anual, inflado por el rebote bid-ask.
+- **Abierto:** estudiar los retornos por periodos (los primeros años distorsionan); rellenar el hueco de octubre de 2026; acumular velas propias de semanas.
 
 ### Fase 5 · Predicción
 
