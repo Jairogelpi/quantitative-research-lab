@@ -9,7 +9,8 @@ import pytest
 from radar.almacen import LakeParquet
 from radar.analisis.hayashi_yoshida import (CONFIRMADA, FUENTE_HY, INSUFICIENTE, NS, SIMULTANEO, correlacion_hy,
                                             covarianza_hy, curva_hy, estudiar_hayashi_yoshida,
-                                            guardar_hayashi_yoshida, mids_desde_eventos, mids_flujo, rotar)
+                                            SIN_HORA, guardar_hayashi_yoshida, mejores_desde_eventos,
+                                            mids_desde_eventos, mids_flujo, rotar)
 
 INICIO = pd.Timestamp("2026-11-22 10:00", tz="UTC")
 
@@ -114,6 +115,81 @@ def test_mids_desde_eventos_reconstruye_el_libro():
     assert mids["exchange_ns"].iloc[-1] == h(0.35).value
 
 
+def test_mejores_desde_eventos_da_el_mejor_nivel_de_cada_mensaje():
+    """La misma reconstrucción, mensaje a mensaje: precio y cantidad del mejor bid y ask, y el tramo (cada snapshot
+    empieza uno nuevo). Los mids que salen de aquí, quitando repetidos, son exactamente `mids_desde_eventos`."""
+    h = lambda s: INICIO + pd.Timedelta(seconds=s)
+    filas = [  # (recibido, tipo, lado, precio, cantidad, secuencia)
+        (0.0, "update", "bid", 100.5, 1, 11),
+        (0.1, "snapshot", "bid", 100, 1, 10), (0.1, "snapshot", "bid", 99, 1, 10),
+        (0.1, "snapshot", "ask", 101, 1, 10), (0.1, "snapshot", "ask", 102, 1, 10),
+        (0.2, "update", "ask", 101, 0, 12),
+        (0.3, "update", "bid", 99, 2, 13),
+        (0.4, "update", "bid", 100.5, 3, 14),     # misma mejor cantidad cambia: mismo mid, distinta cantidad
+        (0.5, "update", "ask", 100, 1, 16),       # hueco de secuencia (15 falta): el libro deja de valer
+        (0.6, "snapshot", "bid", 90, 2, 20), (0.6, "snapshot", "ask", 91, 4, 20),
+    ]
+    eventos = pd.DataFrame([{"recibido_utc": h(r), "hora_exchange_utc": h(r - 0.05), "tipo": ti, "lado": la,
+                             "precio": float(p), "cantidad": float(c), "secuencia": float(s)}
+                            for r, ti, la, p, c, s in filas])
+    mejores = mejores_desde_eventos(eventos, con_buffer=True)
+    assert mejores["bid"].tolist() == [100.5, 100.5, 100.5, 100.5, 90]
+    assert mejores["bid_cantidad"].tolist() == [1, 1, 1, 3, 2]
+    assert mejores["ask"].tolist() == [101, 102, 102, 102, 91]
+    assert mejores["ask_cantidad"].tolist() == [1, 1, 1, 1, 4]
+    assert mejores["tramo"].tolist() == [1, 1, 1, 1, 2]
+    assert mejores["recibido_ns"].iloc[0] == h(0.1).value
+    mids = mids_desde_eventos(eventos, con_buffer=True)
+    desde_mejores = (mejores["bid"] + mejores["ask"]) / 2
+    cambia = desde_mejores.ne(desde_mejores.shift())
+    assert desde_mejores[cambia].tolist() == mids["mid"].tolist() == [100.75, 101.25, 90.5]
+    assert mejores["recibido_ns"][cambia].tolist() == mids["recibido_ns"].tolist()
+
+
+def test_mids_desde_eventos_no_cambia_en_un_libro_largo():
+    """Regresión de la refactorización: mismos mids que una reconstrucción directa con diccionarios, en un libro
+    aleatorio de varios niveles con truncado de profundidad y libros cruzados."""
+    rng = np.random.default_rng(9)
+    filas, rec = [], 0.0
+    for k in range(3000):
+        rec += 0.01
+        tipo = "snapshot" if k % 1000 == 0 else "update"
+        niveles = 6 if tipo == "snapshot" else int(rng.integers(1, 4))
+        for _ in range(niveles):
+            lado = "bid" if rng.random() < 0.5 else "ask"
+            centro = 98 if lado == "bid" else 103   # a veces se cruzan (101 contra 100)
+            filas.append({"recibido_utc": INICIO + pd.Timedelta(seconds=rec), "hora_exchange_utc": pd.NaT,
+                          "tipo": tipo, "lado": lado, "precio": float(centro + rng.integers(-3, 4)),
+                          "cantidad": float(rng.integers(0, 3)), "secuencia": float(k)})
+    eventos = pd.DataFrame(filas)
+
+    def directo(eventos, profundidad):
+        bids, asks, salida, ultimo = {}, {}, [], math.nan
+        for _, g in eventos.groupby("recibido_utc", sort=True):
+            if g["tipo"].iloc[0] == "snapshot":
+                bids.clear(), asks.clear()
+            for f in g.itertuples():
+                lado = bids if f.lado == "bid" else asks
+                if f.cantidad > 0:
+                    lado[f.precio] = f.cantidad
+                else:
+                    lado.pop(f.precio, None)
+            for lado, peores in ((bids, sorted), (asks, lambda x: sorted(x, reverse=True))):
+                for p in peores(lado)[:max(len(lado) - profundidad, 0)]:
+                    del lado[p]
+            if bids and asks and max(bids) < min(asks):
+                mid = (max(bids) + min(asks)) / 2
+                if mid != ultimo:
+                    salida.append(mid)
+                    ultimo = mid
+        return salida
+
+    mids = mids_desde_eventos(eventos, profundidad=4)
+    assert len(mids) > 100
+    assert mids["mid"].tolist() == directo(eventos, 4)
+    assert (mids["exchange_ns"] == SIN_HORA).all()
+
+
 def _libro_sintetico(exchange, tiempos_s, mids, desfase_exchange_s=0.0):
     filas, previo = [], None
     for k, (t, m) in enumerate(zip(tiempos_s, mids)):
@@ -179,3 +255,19 @@ def test_datos_insuficientes(tmp_path):
     r = estudiar_hayashi_yoshida(mids_flujo(lake.consultar), n_sustitutos=19, minimo=1000)
     assert all(x.estado == INSUFICIENTE for x in r)
     assert "datos insuficientes" in r[0].conclusion()
+
+
+def test_una_ventana_que_empieza_a_mitad_de_tramo_reconstruye_desde_el_snapshot_anterior(tmp_path):
+    """La captura recibe un snapshot solo al conectar (cada hora): sin él no hay libro. La ventana debe arrancar la
+    reconstrucción en el último snapshot anterior y devolver solo lo que cae dentro de la ventana."""
+    from radar.analisis.hayashi_yoshida import mids_flujo
+    t0 = pd.Timestamp("2026-11-22 10:00:00", tz="UTC")
+    ev = lambda s, tipo, lado, precio: {"exchange": "kraken", "recibido_utc": t0 + pd.Timedelta(seconds=s),
+                                        "hora_exchange_utc": t0 + pd.Timedelta(seconds=s), "tipo": tipo, "lado": lado,
+                                        "precio": precio, "cantidad": 1.0, "secuencia": np.nan}
+    lake = LakeParquet(tmp_path)
+    lake.guardar([ev(0, "snapshot", "bid", 100.0), ev(0, "snapshot", "ask", 101.0), ev(20, "update", "ask", 100.5),
+                  ev(100, "update", "bid", 100.2)], "eventos_libro")
+    mids = mids_flujo(lake.consultar, desde_utc=t0 + pd.Timedelta(seconds=50))
+    assert list(mids["mid"]) == [100.35]  # 100,2 y 100,5: el ask de 20 s se aplicó, pero solo sale lo de la ventana
+    assert mids["recibido_ns"].iloc[0] == (t0 + pd.Timedelta(seconds=100)).value

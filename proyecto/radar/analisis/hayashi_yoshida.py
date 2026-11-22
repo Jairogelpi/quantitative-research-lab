@@ -87,20 +87,20 @@ def _ns(serie: pd.Series) -> np.ndarray:
     return pd.to_datetime(serie, utc=True).dt.tz_convert(None).to_numpy().astype("datetime64[ns]").astype(np.int64)
 
 
-def mids_desde_eventos(eventos: pd.DataFrame, con_buffer: bool = False, profundidad: int | None = None) -> pd.DataFrame:
-    """Reconstruye el libro de UN exchange mensaje a mensaje y devuelve cada cambio del mid.
+def _recorrer_libro(eventos: pd.DataFrame, con_buffer: bool = False, profundidad: int | None = None):
+    """Reconstruye el libro de UN exchange mensaje a mensaje. Tras cada mensaje que deja un libro válido y sin
+    cruzar, produce (recibido_ns, exchange_ns, mejor bid, su cantidad, mejor ask, su cantidad, tramo); `tramo`
+    cuenta los snapshots aplicados, así que cambia cada vez que el libro se reconstruye desde cero.
 
     `eventos`: recibido_utc, hora_exchange_utc, tipo, lado, precio, cantidad, secuencia (una fila por nivel, como
     `eventos_libro`). Un mensaje = filas seguidas con la misma hora de recepción y tipo. Reglas de `sincronizacion`:
     antes del primer snapshot no hay libro; con `con_buffer` (Bitvavo) las actualizaciones que llegan sin libro se
     guardan y, al llegar el snapshot, se aplican las de secuencia mayor; un hueco de secuencia invalida el libro
     hasta el siguiente snapshot. Con `profundidad` (Kraken) el libro se trunca tras cada mensaje. Un libro cruzado
-    no publica mid. Salida: recibido_ns, exchange_ns (SIN_HORA si falta), mid y cotizado_bps (spread en ese
-    momento; solo se emite cuando cambia el mid, así que un cambio de spread con el mismo mid no añade fila).
+    no publica nada.
     """
     if eventos.empty:
-        return pd.DataFrame({"recibido_ns": np.array([], np.int64), "exchange_ns": np.array([], np.int64),
-                             "mid": np.array([], float), "cotizado_bps": np.array([], float)})
+        return
     eventos = eventos.sort_values("recibido_utc", kind="stable")
     rec, hora = _ns(eventos["recibido_utc"]), _ns(eventos["hora_exchange_utc"])
     snap = (eventos["tipo"] == "snapshot").to_numpy()
@@ -115,9 +115,8 @@ def mids_desde_eventos(eventos: pd.DataFrame, con_buffer: bool = False, profundi
     bids: dict[float, float] = {}
     asks: dict[float, float] = {}
     estado = {"bb": -math.inf, "ba": math.inf, "sucio_b": False, "sucio_a": False}
-    valido, ultima = False, math.nan
+    valido, ultima, tramo = False, math.nan, 0
     buffer: deque[tuple[float, int, int]] = deque(maxlen=MAX_BUFFER)
-    salida_r, salida_h, salida_m, salida_s, ultimo_mid = [], [], [], [], math.nan
 
     def aplicar(i0: int, i1: int):
         for k in range(i0, i1):
@@ -144,7 +143,7 @@ def mids_desde_eventos(eventos: pd.DataFrame, con_buffer: bool = False, profundi
             asks.clear()
             aplicar(i0, i1)
             estado.update(sucio_b=True, sucio_a=True)
-            valido, ultima = True, seq
+            valido, ultima, tramo = True, seq, tramo + 1
             if con_buffer:
                 for s, j0, j1 in sorted(b for b in buffer if not (b[0] <= seq)):
                     if not math.isnan(ultima) and s != ultima + 1:
@@ -180,33 +179,78 @@ def mids_desde_eventos(eventos: pd.DataFrame, con_buffer: bool = False, profundi
             estado.update(ba=min(asks) if asks else math.inf, sucio_a=False)
         if not valido or not bids or not asks or estado["bb"] >= estado["ba"]:
             continue
-        mid = (estado["bb"] + estado["ba"]) / 2
+        bb, ba = estado["bb"], estado["ba"]
+        yield rec_l[i0], hora_l[i0], bb, bids[bb], ba, asks[ba], tramo
+
+
+def mids_desde_eventos(eventos: pd.DataFrame, con_buffer: bool = False, profundidad: int | None = None) -> pd.DataFrame:
+    """Cada cambio del mid del libro reconstruido por `_recorrer_libro` (mismas reglas y parámetros).
+
+    Salida: recibido_ns, exchange_ns (SIN_HORA si falta), mid y cotizado_bps (spread en ese momento; solo se emite
+    cuando cambia el mid, así que un cambio de spread con el mismo mid no añade fila).
+    """
+    salida_r, salida_h, salida_m, salida_s, ultimo_mid = [], [], [], [], math.nan
+    for rec, hora, bb, _, ba, _, _ in _recorrer_libro(eventos, con_buffer, profundidad):
+        mid = (bb + ba) / 2
         if mid != ultimo_mid:
-            salida_r.append(rec_l[i0])
-            salida_h.append(hora_l[i0])
+            salida_r.append(rec)
+            salida_h.append(hora)
             salida_m.append(mid)
-            salida_s.append((estado["ba"] - estado["bb"]) / mid * 1e4)  # spread cotizado en ese momento (bps)
+            salida_s.append((ba - bb) / mid * 1e4)  # spread cotizado en ese momento (bps)
             ultimo_mid = mid
     return pd.DataFrame({"recibido_ns": np.array(salida_r, np.int64), "exchange_ns": np.array(salida_h, np.int64),
                          "mid": np.array(salida_m, float), "cotizado_bps": np.array(salida_s, float)})
+
+
+COLUMNAS_MEJORES = ["recibido_ns", "exchange_ns", "bid", "bid_cantidad", "ask", "ask_cantidad", "tramo"]
+
+
+def mejores_desde_eventos(eventos: pd.DataFrame, con_buffer: bool = False,
+                          profundidad: int | None = None) -> pd.DataFrame:
+    """El mejor nivel tras CADA mensaje con libro válido (aunque no cambie): base del OFI evento a evento.
+    Columnas `COLUMNAS_MEJORES`; `tramo` cambia con cada snapshot (el libro se reconstruyó desde cero)."""
+    filas = list(_recorrer_libro(eventos, con_buffer, profundidad))
+    columnas = list(zip(*filas)) if filas else [[]] * len(COLUMNAS_MEJORES)
+    tipos = (np.int64, np.int64, float, float, float, float, np.int64)
+    return pd.DataFrame({c: np.array(v, t) for c, v, t in zip(COLUMNAS_MEJORES, columnas, tipos)})
+
+
+def eventos_flujo(consultar: Callable[[str], pd.DataFrame], desde_utc=None, hasta_utc=None, exchanges=None):
+    """(exchange, eventos de `eventos_libro` de ese exchange, ordenados por recepción), uno a uno: el filtro va en
+    DuckDB para no cargar todo el lake.
+
+    Con `desde_utc`, los eventos empiezan en el último SNAPSHOT anterior a `desde_utc`, no en `desde_utc`: la captura
+    solo recibe un snapshot al conectar (cada tramo de una hora) y sin él no hay libro. Quien reconstruye devuelve
+    después solo lo que cae dentro de la ventana (`_dentro`)."""
+    hasta = "" if hasta_utc is None else f" AND recibido_utc <= TIMESTAMPTZ '{pd.Timestamp(hasta_utc).isoformat()}'"
+    nombres = exchanges or consultar("SELECT DISTINCT exchange FROM eventos_libro ORDER BY 1")["exchange"].tolist()
+    for ex in nombres:
+        desde = ""
+        if desde_utc is not None:
+            inicio = pd.Timestamp(desde_utc)
+            previo = consultar(f"""SELECT max(recibido_utc) AS t FROM eventos_libro WHERE exchange = '{ex}'
+                                   AND tipo = 'snapshot' AND recibido_utc <= TIMESTAMPTZ '{inicio.isoformat()}'""")
+            if not previo.empty and pd.notna(previo["t"].iloc[0]):
+                inicio = pd.Timestamp(previo["t"].iloc[0])
+            desde = f" AND recibido_utc >= TIMESTAMPTZ '{inicio.isoformat()}'"
+        yield ex, consultar(f"""SELECT recibido_utc, hora_exchange_utc, tipo, lado, precio, cantidad, secuencia
+                                FROM eventos_libro WHERE exchange = '{ex}'{desde}{hasta} ORDER BY recibido_utc""")
+
+
+def _dentro(filas: pd.DataFrame, desde_utc) -> pd.DataFrame:
+    """Solo las filas (con `recibido_ns`) desde `desde_utc`: lo anterior sirvió para reconstruir el libro."""
+    if desde_utc is None or filas.empty:
+        return filas
+    return filas[filas["recibido_ns"] >= pd.Timestamp(desde_utc).value].reset_index(drop=True)
 
 
 def mids_flujo(consultar: Callable[[str], pd.DataFrame], desde_utc=None, hasta_utc=None,
                exchanges=None) -> pd.DataFrame:
     """Cambios del mid de cada exchange reconstruidos desde `eventos_libro` (filtrado en DuckDB por exchange y
     ventana). Columnas: exchange, recibido_ns, exchange_ns, mid, cotizado_bps."""
-    condiciones = []
-    if desde_utc is not None:
-        condiciones.append(f"recibido_utc >= TIMESTAMPTZ '{pd.Timestamp(desde_utc).isoformat()}'")
-    if hasta_utc is not None:
-        condiciones.append(f"recibido_utc <= TIMESTAMPTZ '{pd.Timestamp(hasta_utc).isoformat()}'")
-    filtro = (" AND " + " AND ".join(condiciones)) if condiciones else ""
-    nombres = exchanges or consultar("SELECT DISTINCT exchange FROM eventos_libro ORDER BY 1")["exchange"].tolist()
     partes = []
-    for ex in nombres:
-        eventos = consultar(f"""SELECT recibido_utc, hora_exchange_utc, tipo, lado, precio, cantidad, secuencia
-                                FROM eventos_libro WHERE exchange = '{ex}'{filtro} ORDER BY recibido_utc""")
-        mids = mids_desde_eventos(eventos, **PARAMETROS_LIBRO.get(ex, {}))
+    for ex, eventos in eventos_flujo(consultar, desde_utc, hasta_utc, exchanges):
+        mids = _dentro(mids_desde_eventos(eventos, **PARAMETROS_LIBRO.get(ex, {})), desde_utc)
         partes.append(mids.assign(exchange=ex))
     if not partes:
         return pd.DataFrame(columns=["exchange", "recibido_ns", "exchange_ns", "mid", "cotizado_bps"])
