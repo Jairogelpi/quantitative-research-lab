@@ -37,3 +37,18 @@ def test_catalogo_para_dbeaver(tmp_path):
     lake.guardar(filas(2, "2026-11-23 10:00:00"), "cotizaciones")  # llega después: la vista la ve igual
     with duckdb.connect(str(ruta), read_only=True) as con:
         assert con.execute("SELECT count(*) FROM cotizaciones").fetchone()[0] == 5
+
+
+def test_dos_lotes_que_empiezan_en_el_mismo_instante_no_se_pisan(tmp_path):
+    """Dos capturas (REST y websocket) pueden escribir a la vez un lote igual de largo y con la misma primera hora."""
+    lake, t = LakeParquet(tmp_path), pd.Timestamp("2026-11-22 10:00", tz="UTC")
+    lake.guardar([{"exchange": "kraken", "recibido_utc": t, "error": "HTTP 500"}], "errores_captura")
+    lake.guardar([{"exchange": "kraken", "recibido_utc": t, "error": "hueco", "origen": "flujo"}], "errores_captura")
+    assert sorted(lake.consultar("SELECT error FROM errores_captura")["error"]) == ["HTTP 500", "hueco"]
+
+
+def test_no_deja_ficheros_a_medio_escribir_a_la_vista_de_las_consultas(tmp_path):
+    lake = LakeParquet(tmp_path)
+    (ruta,) = lake.guardar([{"recibido_utc": pd.Timestamp("2026-11-22 10:00", tz="UTC"), "x": 1}], "prueba")
+    assert ruta.suffix == ".parquet" and ruta.exists()
+    assert not list(tmp_path.rglob("*.tmp"))  # el temporal se renombró: no queda nada a medias
