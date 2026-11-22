@@ -29,13 +29,23 @@ $pasos = @(
     @("ofi-eventos", "--horas", "168"),     # Fase 3: OFI con cada cambio del libro
     @("presion", "--horas", "168"),         # Fase 3: trade imbalance, CVD, intensidad, VWAP, exposición
     @("respuesta", "--horas", "168"),       # Fase 3: función de respuesta de Bouchaud
+    @("velas", "--horas", "168"),           # Fase 4: velas propias de la semana
+    @("historico-kraken"),                  # Fase 4: lo nuevo de Kraken (idempotente)
+    @("comparar-velas"),                    # Fase 4: propias frente a oficiales
+    @("retornos", "--fuente", "propia"),
+    @("retornos", "--fuente", "kraken_historico"),
     @("registro"),                          # 3. corrección global sobre todo lo probado
     @("robustez")                           # 4. parámetros vecinos de cada hallazgo
 )
 
 $fallos = 0
 Push-Location $proyecto
+$soloDatos = @("velas", "historico-kraken")  # actualizan datos (idempotentes) y no tienen --no-guardar
 foreach ($paso in $pasos) {
+    if ($Prueba -and $soloDatos -contains $paso[0]) {
+        "{0:o} --- {1} (se salta en modo prueba: solo actualiza datos)" -f (Get-Date).ToUniversalTime(), $paso[0] | Out-File -Append -Encoding utf8 $log
+        continue
+    }
     "{0:o} === {1}" -f (Get-Date).ToUniversalTime(), ($paso -join " ") | Out-File -Append -Encoding utf8 $log
     $argumentos = if ($Prueba) { $paso + "--no-guardar" } else { $paso }
     & $Python -m radar @argumentos 2>&1 | Out-File -Append -Encoding utf8 $log

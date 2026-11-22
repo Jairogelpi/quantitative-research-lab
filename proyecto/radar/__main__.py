@@ -20,6 +20,10 @@
     python -m radar ofi-eventos [--horas 6] [--intervalos 1,10] [--minimo 200] [--no-guardar]
     python -m radar presion [--horas 6] [--no-guardar]
     python -m radar respuesta [--horas 6] [--no-guardar]
+    python -m radar velas [--horas 168] [--intervalos 60,300,3600,86400]
+    python -m radar historico-kraken [--archivo RUTA_O_URL ...] [--intervalos-zip 60,1440] [--sin-zip]
+    python -m radar comparar-velas [--intervalos 60,300,3600,86400] [--no-guardar]
+    python -m radar retornos [--fuente propia|kraken_historico] [--intervalo 3600] [--exchange kraken] [--no-guardar]
     python -m radar leadlag [--retardos 1,2,3] [--minimo 500] [--no-guardar]
     python -m radar senales [--horizonte 5] [--minimo 500] [--no-guardar]
     python -m radar ofi [--horizontes 1,5,10,30] [--niveles 1,5,10] [--minimo 200] [--no-guardar]
@@ -51,6 +55,11 @@ from radar.analisis.registro import FUENTE_REGISTRO, guardar_registro, registrar
 from radar.analisis.ofi_eventos import FUENTE_OFI_EVENTOS, estudio_ofi_eventos, guardar_ofi_eventos
 from radar.analisis.presion import FUENTE_PRESION, estudiar_presion, guardar_estudio_presion
 from radar.analisis.respuesta import FUENTE_RESPUESTA, estudiar_respuesta, guardar_estudio_respuesta
+from radar.analisis.velas import actualizar_velas
+from radar.analisis.retornos import FUENTE_RETORNOS, estudiar_retornos_lake, guardar_estudio_retornos
+from radar.analisis.comparacion_velas import FUENTE_COMPARACION, comparar_velas, guardar_comparacion_velas
+from radar.captura import historico_kraken
+from radar.captura.exchanges import kraken_historico
 from radar.analisis.robustez import FUENTE_ROBUSTEZ, evaluar_robustez, guardar_robustez, resumen_robustez
 from radar.analisis.estacionalidad import FUENTE_PERFILES, efecto_hora, medianas_diarias, perfil_horario
 from radar.analisis import (FUENTE_ESTUDIOS, HORIZONTES, PRECIOS, estudiar_imbalance, evaluar_calidad, guardar_estudio,
@@ -377,6 +386,47 @@ def cmd_respuesta(args):
                            guardar_estudio_respuesta, FUENTE_RESPUESTA)
 
 
+def cmd_velas(args):
+    lake = LakeParquet()
+    if "trades" not in lake.fuentes():
+        print("No hay trades del websocket: captúralos con `python -m radar flujo`.")
+        return
+    resumen = actualizar_velas(lake, intervalos_s=args.intervalos, horas=args.horas)
+    print(f"Velas propias: {resumen['velas']} calculadas, {resumen['escritas']} nuevas o cambiadas escritas en 'velas'.")
+    for intervalo, r in resumen["por_intervalo"].items():
+        print(f"  - {intervalo} s: {r['velas']} velas, {r['vacias']} vacías, {r['incompletas']} incompletas.")
+
+
+def cmd_historico_kraken(args):
+    lake = LakeParquet()
+    partes = args.archivo or kraken_historico.PARTES_COMPLETO
+    print("Histórico oficial de Kraken (BTC/EUR): archivo OHLCVT por lecturas parciales y la API para lo reciente…")
+    resultado = historico_kraken.actualizar_historico(lake, partes=partes, intervalos_zip_min=args.intervalos_zip,
+                                                      intervalos_rest_min=args.intervalos_rest,
+                                                      con_zip=not args.sin_zip)
+    for fila in resultado["resumen"]:
+        print(f"  - {fila}")
+
+
+def cmd_comparar_velas(args):
+    lake = LakeParquet()
+    if "velas" not in lake.fuentes():
+        print("No hay velas: créalas con `python -m radar velas` y `python -m radar historico-kraken`.")
+        return
+    _mostrar_y_guardar(args, lake, "Velas propias frente a las oficiales de Kraken, en los mismos intervalos:",
+                       comparar_velas(lake.consultar, args.intervalos), guardar_comparacion_velas, FUENTE_COMPARACION)
+
+
+def cmd_retornos(args):
+    lake = LakeParquet()
+    if "velas" not in lake.fuentes():
+        print("No hay velas: créalas con `python -m radar velas` y `python -m radar historico-kraken`.")
+        return
+    resultados = estudiar_retornos_lake(lake.consultar, args.fuente, args.intervalo, args.exchange)
+    _mostrar_y_guardar(args, lake, f"Retornos y volatilidad (velas {args.fuente}):", resultados,
+                       guardar_estudio_retornos, FUENTE_RETORNOS)
+
+
 def cmd_estacionalidad(args):
     lake = LakeParquet()
     perfil = perfil_horario(lake.consultar, args.banda)
@@ -491,6 +541,30 @@ def main(argv=None):
         p.add_argument("--horas", type=float, default=6, help="Ventana hacia atrás, en horas (reconstruir el libro es lento)")
         p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
         p.set_defaults(func=funcion)
+    p = sub.add_parser("velas", help="Velas OHLCV propias desde los trades del websocket")
+    p.add_argument("--horas", type=float, default=168, help="Ventana hacia atrás, en horas")
+    p.add_argument("--intervalos", type=lambda t: tuple(int(x) for x in t.split(",")), default=(60, 300, 3600, 86400),
+                   help="Segundos de cada vela, separados por comas")
+    p.set_defaults(func=cmd_velas)
+    p = sub.add_parser("historico-kraken", help="Histórico oficial de velas de Kraken (archivo OHLCVT y API)")
+    p.add_argument("--archivo", nargs="+", help="Ruta o URL del ZIP (o de sus partes); por defecto, el completo de Kraken")
+    p.add_argument("--intervalos-zip", type=lambda t: tuple(int(x) for x in t.split(",")), default=(60, 1440),
+                   help="Minutos de las velas que se importan del archivo, separados por comas")
+    p.add_argument("--intervalos-rest", type=lambda t: tuple(int(x) for x in t.split(",")), default=(1, 5, 15, 60, 240, 1440),
+                   help="Minutos de las velas que se piden a la API (las 720 más recientes), separados por comas")
+    p.add_argument("--sin-zip", action="store_true", help="Solo la API (lo reciente), sin el archivo")
+    p.set_defaults(func=cmd_historico_kraken)
+    p = sub.add_parser("comparar-velas", help="Compara las velas propias con las oficiales de Kraken")
+    p.add_argument("--intervalos", type=lambda t: tuple(int(x) for x in t.split(",")), default=(60, 300, 3600, 86400),
+                   help="Segundos de las velas que se comparan, separados por comas")
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_comparar_velas)
+    p = sub.add_parser("retornos", help="Retornos, volatilidad anualizada, colas, agrupamiento y regímenes")
+    p.add_argument("--fuente", choices=("propia", "kraken_historico"), default="propia")
+    p.add_argument("--intervalo", type=int, default=None, help="Segundos de vela (por defecto, todos)")
+    p.add_argument("--exchange", choices=EXCHANGES, default=None)
+    p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
+    p.set_defaults(func=cmd_retornos)
     p = sub.add_parser("ofi-eventos", help="OFI evento a evento (Cont-Kukanov-Stoikov) con los cambios del libro")
     p.add_argument("--horas", type=float, default=6, help="Ventana hacia atrás, en horas (reconstruir el libro es lento)")
     p.add_argument("--intervalos", type=lambda t: tuple(float(x) for x in t.split(",")), default=(1.0, 10.0),
@@ -530,6 +604,14 @@ def main(argv=None):
         parser.error("las horas deben ser positivas")
     if args.comando == "hy" and (args.rango <= 0 or args.paso <= 0 or args.paso > args.rango or args.sustitutos < 19):
         parser.error("rango y paso positivos, paso no mayor que el rango y al menos 19 sustitutos")
+    if args.comando == "velas" and (args.horas <= 0 or min(args.intervalos) <= 0):
+        parser.error("horas e intervalos positivos")
+    if args.comando in ("historico-kraken",) and min(args.intervalos_zip + args.intervalos_rest) <= 0:
+        parser.error("los intervalos deben ser positivos")
+    if args.comando == "comparar-velas" and min(args.intervalos) <= 0:
+        parser.error("los intervalos deben ser positivos")
+    if args.comando == "retornos" and args.intervalo is not None and args.intervalo <= 0:
+        parser.error("el intervalo debe ser positivo")
     if args.comando == "ofi-eventos" and (min(args.intervalos) <= 0 or args.minimo < 2):
         parser.error("los intervalos deben ser positivos y el mínimo al menos 2")
     if getattr(args, "horizonte", 1) < 1:
