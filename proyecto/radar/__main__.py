@@ -22,6 +22,7 @@
     python -m radar respuesta [--horas 6] [--no-guardar]
     python -m radar velas [--horas 168] [--intervalos 60,300,3600,86400]
     python -m radar historico-kraken [--archivo RUTA_O_URL ...] [--intervalos-zip 60,1440] [--sin-zip]
+    python -m radar historico-spot [--exchanges okx,bitvavo] [--desde 2026-11-20] [--hasta 2026-11-23] [--max-paginas 30]
     python -m radar comparar-velas [--intervalos 60,300,3600,86400] [--no-guardar]
     python -m radar retornos [--fuente propia|kraken_historico] [--intervalo 3600] [--exchange kraken] [--no-guardar]
     python -m radar prediccion [--fuente kraken_historico] [--intervalos 86400,3600] [--no-guardar]
@@ -67,6 +68,7 @@ from radar.analisis.velas import actualizar_velas
 from radar.analisis.retornos import FUENTE_RETORNOS, estudiar_retornos_lake, guardar_estudio_retornos
 from radar.analisis.comparacion_velas import FUENTE_COMPARACION, comparar_velas, guardar_comparacion_velas
 from radar.captura import historico_kraken
+from radar.captura.historico_spot import actualizar_spot
 from radar.captura.exchanges import kraken_historico
 from radar.analisis import prediccion
 from radar.analisis.derivados import FUENTE_ESTUDIO as FUENTE_DERIVADOS
@@ -424,6 +426,18 @@ def cmd_historico_kraken(args):
         print(f"  - {fila}")
 
 
+def cmd_historico_spot(args):
+    resultados = actualizar_spot(LakeParquet(), exchanges=tuple(args.exchanges.split(",")),
+                                  intervalos_s=args.intervalos, desde=args.desde, hasta=args.hasta,
+                                  max_paginas=args.max_paginas)
+    for fila in resultados:
+        print(f"  - {fila}")
+    if any("error" in fila for fila in resultados):
+        raise RuntimeError("Fallaron una o más descargas históricas spot; revisar errores")
+    if any(not fila["ventana_completa"] for fila in resultados):
+        print("AVISO: ventana histórica parcial por límite de páginas. Ampliar --max-paginas.")
+
+
 def cmd_comparar_velas(args):
     lake = LakeParquet()
     if "velas" not in lake.fuentes():
@@ -661,6 +675,14 @@ def main(argv=None):
                    help="Minutos de las velas que se piden a la API (las 720 más recientes), separados por comas")
     p.add_argument("--sin-zip", action="store_true", help="Solo la API (lo reciente), sin el archivo")
     p.set_defaults(func=cmd_historico_kraken)
+    p = sub.add_parser("historico-spot", help="Histórico spot BTC/EUR de OKX y Bitvavo, paginado e idempotente")
+    p.add_argument("--exchanges", default="okx,bitvavo")
+    p.add_argument("--desde", help="Inicio UTC inclusivo, ISO-8601 (por defecto, últimas 24 h)")
+    p.add_argument("--hasta", help="Fin UTC exclusivo, ISO-8601 (por defecto, ahora)")
+    p.add_argument("--intervalos", type=lambda t: tuple(int(x) for x in t.split(",")),
+                   default=(60, 3600, 86400), help="Intervalos en segundos: 60,300,900,3600,14400,86400")
+    p.add_argument("--max-paginas", type=int, default=30, help="Máximo por exchange e intervalo")
+    p.set_defaults(func=cmd_historico_spot)
     p = sub.add_parser("comparar-velas", help="Compara las velas propias con las oficiales de Kraken")
     p.add_argument("--intervalos", type=lambda t: tuple(int(x) for x in t.split(",")), default=(60, 300, 3600, 86400),
                    help="Segundos de las velas que se comparan, separados por comas")
@@ -747,6 +769,11 @@ def main(argv=None):
         parser.error("las horas deben ser positivas")
     if args.comando == "hy" and (args.rango <= 0 or args.paso <= 0 or args.paso > args.rango or args.sustitutos < 19):
         parser.error("rango y paso positivos, paso no mayor que el rango y al menos 19 sustitutos")
+    if args.comando == "historico-spot" and (args.max_paginas < 1 or not args.intervalos
+                                               or any(i not in (60, 300, 900, 3600, 14400, 86400)
+                                                      for i in args.intervalos)
+                                               or not set(args.exchanges.split(",")) <= {"okx", "bitvavo"}):
+        parser.error("historico-spot: exchanges, intervalos o máximo de páginas incorrectos")
     if args.comando == "historico-derivados" and args.dias < 1:
         parser.error("los días deben ser al menos 1")
     if args.comando == "opciones" and args.max_tickers != "todos" and (not args.max_tickers.isdigit()
