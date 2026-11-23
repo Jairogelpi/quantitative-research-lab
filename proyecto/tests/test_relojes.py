@@ -134,4 +134,4 @@ def test_guardar_relojes_con_hasta_utc(lake):
     df = lake.consultar(f"SELECT * FROM {FUENTE_RELOJES}")
     assert len(df) == len(resultados)
     assert {"hasta_utc", "estado", "conclusion", "deriva_ms_h", "metodo"} <= set(df.columns)
-    assert df.hasta_utc.max() <= ejecutado
+    assert pd.to_datetime(df.hasta_utc, utc=True).max() <= ejecutado  # DuckDB puede devolver naive
