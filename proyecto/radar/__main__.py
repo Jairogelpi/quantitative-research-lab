@@ -8,7 +8,7 @@
                             [--impactos 0,1,5] [--urgencias 1,3] [--urgencia-adaptativa 1]
                             [--intensidades 0.5,1] [--no-guardar]
     python -m radar estacionalidad [--banda 10] [--no-guardar]
-    python -m radar flujo [segundos] [--exchanges kraken,okx,bitvavo]
+    python -m radar flujo [segundos] [--continuo] [--exchanges kraken,okx,bitvavo]
     python -m radar markouts [--no-guardar]
     python -m radar liquidez [--horas 6] [--no-guardar]
     python -m radar volatilidad [--no-guardar]
@@ -104,9 +104,10 @@ def cmd_capturar(args):
 
 def cmd_flujo(args):
     exchanges = args.exchanges.split(",")
-    print(f"Capturando el flujo del libro y los trades por websocket de {', '.join(exchanges)} durante "
-          f"{args.segundos:.0f} s…")
-    resumen = capturar_flujo(exchanges, LakeParquet(), args.segundos)
+    duracion = None if args.continuo else args.segundos
+    periodo = "sin límite horario" if args.continuo else f"durante {args.segundos:.0f} s"
+    print(f"Capturando por websocket de {', '.join(exchanges)} {periodo}…")
+    resumen = capturar_flujo(exchanges, LakeParquet(), duracion)
     print(f"Terminado: {resumen['eventos_libro']} cambios del libro, {resumen['trades']} trades y {resumen['libros']} "
           f"libros reconstruidos; {resumen['errores']} errores, {resumen['resincronizaciones']} resincronizaciones y "
           f"{resumen['reconexiones']} reconexiones.")
@@ -590,9 +591,10 @@ def main(argv=None):
                    help="Niveles por lado del libro que se guardan (0 = no guardar libros)")
     p.add_argument("--sin-comparar", action="store_true", help="No guardar comparaciones ni conclusiones")
     p.set_defaults(func=cmd_capturar)
-    p = sub.add_parser("flujo", help="Captura por websocket los cambios del libro (con secuencia y checksum) y los trades")
+    p = sub.add_parser("flujo", help="Captura por websocket los cambios del libro y los trades")
     p.add_argument("segundos", nargs="?", type=float, default=60)
     p.add_argument("--exchanges", type=str, default=",".join(EXCHANGES))
+    p.add_argument("--continuo", action="store_true", help="Sin corte obligatorio cada hora")
     p.set_defaults(func=cmd_flujo)
     p = sub.add_parser("costes", help="Coste de una ida y vuelta barriendo el libro y punto de equilibrio, con datos de ahora")
     p.add_argument("--importe", type=float, default=IMPORTE_COMPARACION)
@@ -689,13 +691,13 @@ def main(argv=None):
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
     p.set_defaults(func=cmd_comparar_velas)
     p = sub.add_parser("retornos", help="Retornos, volatilidad anualizada, colas, agrupamiento y regímenes")
-    p.add_argument("--fuente", choices=("propia", "kraken_historico"), default="propia")
+    p.add_argument("--fuente", choices=("propia", "kraken_historico", "okx_historico", "bitvavo_historico"), default="propia")
     p.add_argument("--intervalo", type=int, default=None, help="Segundos de vela (por defecto, todos)")
     p.add_argument("--exchange", choices=EXCHANGES, default=None)
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
     p.set_defaults(func=cmd_retornos)
     p = sub.add_parser("prediccion", help="Momentum y reversión con validación purgada y muestra guardada bajo llave")
-    p.add_argument("--fuente", choices=("propia", "kraken_historico"), default=prediccion.FUENTE_POR_DEFECTO)
+    p.add_argument("--fuente", choices=("propia", "kraken_historico", "okx_historico", "bitvavo_historico"), default=prediccion.FUENTE_POR_DEFECTO)
     p.add_argument("--intervalos", type=lambda t: tuple(int(x) for x in t.split(",")),
                    default=prediccion.INTERVALOS_POR_DEFECTO,
                    help="Segundos de vela, separados por comas (otra lista es otra familia, con su propia muestra guardada)")
