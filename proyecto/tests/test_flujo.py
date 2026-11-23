@@ -323,3 +323,18 @@ def test_una_escritura_fallida_no_detiene_las_fotos_ni_duplica_filas():
     assert len(errores) == 1 and "disco ocupado" in errores[0]["error"] and resumen["errores"] == 1
     eventos = almacen.filas(FUENTE_EVENTOS)
     assert len(eventos) == len({(e["tipo"], e["lado"], e["precio"], e["secuencia"]) for e in eventos})  # sin duplicados
+
+
+def test_eventos_persistidos_tienen_trazabilidad_de_sesion_y_decimales():
+    p = okx.OKX()
+    almacen, _, _ = capturar_prueba(
+        [p], {p.url: [[OKX_SNAPSHOT, OKX_UPDATE, OKX_TRADE]]}, segundos=0.2)
+    eventos = almacen.filas(FUENTE_EVENTOS)
+    trades = almacen.filas(FUENTE_TRADES)
+    libros = almacen.filas(FUENTE_LIBROS_FLUJO)
+    assert eventos and trades and libros
+    assert len({f["captura_id"] for f in eventos + trades + libros}) == 1
+    assert len({f["conexion_id"] for f in eventos + trades + libros}) == 1
+    assert all("secuencia_previa" in f and "checksum" in f for f in eventos)
+    assert all("precio_decimal" in f and "cantidad_decimal" in f for f in eventos)
+    assert any(f["secuencia_previa"] == 100 for f in eventos)

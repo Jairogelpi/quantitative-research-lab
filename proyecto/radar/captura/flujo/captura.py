@@ -25,6 +25,7 @@ del snapshot), `trades`, `libros_flujo` (la foto periódica, con la `secuencia` 
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Callable
 
 import pandas as pd
@@ -75,13 +76,15 @@ class _Captura:
     def __init__(self, almacen: Almacen, tam_lote: int, reloj: Callable[[], pd.Timestamp]):
         self.almacen, self.tam_lote, self.reloj = almacen, tam_lote, reloj
         self.lotes: dict[str, list] = {}
+        self.captura_id = uuid.uuid4().hex
+        self.conexiones: dict[str, str] = {}
         self.sincronizadores: dict[str, Sincronizador | None] = {}
         self.cuenta = {"eventos_libro": 0, "trades": 0, "libros": 0, "errores": 0, "resincronizaciones": 0,
                        "reconexiones": 0}
 
     def anadir(self, fuente: str, filas: list[dict]):
         lote = self.lotes.setdefault(fuente, [])
-        lote.extend(filas)
+        lote.extend([{**fila, "captura_id": self.captura_id} for fila in filas])
         while len(lote) >= self.tam_lote:
             self.almacen.guardar(lote[:self.tam_lote], fuente)
             del lote[:self.tam_lote]
@@ -103,7 +106,8 @@ class _Captura:
             raise fallo
 
     def error(self, exchange: str, error: BaseException):
-        self.anadir(FUENTE_ERRORES, [fila_error(exchange, self.reloj(), error)])
+        self.anadir(FUENTE_ERRORES, [{**fila_error(exchange, self.reloj(), error),
+                                      "conexion_id": self.conexiones.get(exchange)}])
         self.cuenta["errores"] += 1
 
     def foto(self, niveles: int, par: str):
@@ -116,7 +120,8 @@ class _Captura:
             except (CotizacionInvalida, ValueError) as exc:  # libro cruzado o vacío: se registra, no se guarda
                 self.error(nombre, exc)
                 continue
-            self.anadir(FUENTE_LIBROS_FLUJO, [{**libro.a_fila(niveles), "secuencia": sinc.libro.secuencia}])
+            self.anadir(FUENTE_LIBROS_FLUJO, [{**libro.a_fila(niveles), "secuencia": sinc.libro.secuencia,
+                                                "conexion_id": self.conexiones.get(nombre)}])
             self.cuenta["libros"] += 1
 
 
@@ -142,6 +147,7 @@ async def _sesion(protocolo, c: _Captura, conectar, espera_mensaje: float, esper
     while True:
         try:
             async with conectar(protocolo.url) as ws:
+                c.conexiones[protocolo.nombre] = uuid.uuid4().hex
                 sinc = Sincronizador(protocolo.nuevo_libro(), con_buffer=protocolo.con_buffer)
                 c.sincronizadores[protocolo.nombre] = sinc
                 for mensaje in protocolo.suscripcion():
@@ -152,10 +158,17 @@ async def _sesion(protocolo, c: _Captura, conectar, espera_mensaje: float, esper
                     for evento in protocolo.interpretar(texto):
                         espera = espera_reconexion  # llegan datos: la conexión funciona
                         if isinstance(evento, Trade):
-                            c.anadir(FUENTE_TRADES, [fila_trade(evento, recibido)])
+                            c.anadir(FUENTE_TRADES, [{**fila_trade(evento, recibido),
+                                                       "conexion_id": c.conexiones.get(protocolo.nombre)}])
                             c.cuenta["trades"] += 1
                             continue
                         filas = filas_evento(evento, recibido)
+                        niveles_decimales = (*evento.bids, *evento.asks)
+                        filas = [{**fila, "secuencia_previa": evento.secuencia_previa,
+                                  "checksum": evento.checksum,
+                                  "precio_decimal": str(nivel[0]), "cantidad_decimal": str(nivel[1]),
+                                  "conexion_id": c.conexiones.get(protocolo.nombre)}
+                                 for fila, nivel in zip(filas, niveles_decimales)]
                         c.anadir(FUENTE_EVENTOS, filas)
                         c.cuenta["eventos_libro"] += len(filas)
                         desincronizacion = sinc.aplicar(evento)
@@ -230,13 +243,22 @@ def capturar_flujo(exchanges, almacen: Almacen, segundos: float | None, tam_lote
                    niveles_guardados: int = NIVELES_GUARDADOS, par: str = PAR, conectar=_conectar_websocket,
                    espera_mensaje: float = ESPERA_MENSAJE_S, espera_reconexion: float = ESPERA_RECONEXION_S,
                    espera_max: float = ESPERA_MAX_RECONEXION_S, reloj=ahora_utc,
-                   escritura_en_hilo: bool = False) -> dict:
+                   escritura_en_hilo: bool = False, escritura_durable: bool = False,
+                   ruta_wal=None) -> dict:
     """Captura `segundos` de flujo de los `exchanges` (nombres o protocolos) y lo guarda en `almacen`.
     Devuelve un resumen con lo guardado y las incidencias."""
     protocolos = [crear_protocolos([e])[0] if isinstance(e, str) else e for e in exchanges]
     from radar.almacen.cola import ColaEscritura
 
-    escritor = ColaEscritura(almacen) if escritura_en_hilo else almacen
+    if escritura_en_hilo and escritura_durable:
+        raise ValueError("Use solamente una modalidad de escritura asíncrona")
+    if escritura_durable:
+        from pathlib import Path
+        from radar.almacen.durable import AlmacenDurable
+        ruta = Path(ruta_wal) if ruta_wal is not None else almacen.raiz.parent / "wal" / "flujo.sqlite"
+        escritor = AlmacenDurable(almacen, ruta)
+    else:
+        escritor = ColaEscritura(almacen) if escritura_en_hilo else almacen
     c = _Captura(escritor, tam_lote, reloj)
     try:
         asyncio.run(_capturar(protocolos, c, segundos, conectar, intervalo_libros, intervalo_volcado,
@@ -245,6 +267,6 @@ def capturar_flujo(exchanges, almacen: Almacen, segundos: float | None, tam_lote
         try:
             c.volcar()
         finally:
-            if escritura_en_hilo:
+            if escritura_en_hilo or escritura_durable:
                 escritor.cerrar()
     return dict(c.cuenta)

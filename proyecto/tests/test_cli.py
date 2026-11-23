@@ -19,6 +19,7 @@ from radar.__main__ import main  # falla si __main__.py no compila
     ["senales", "--horizonte", "0"],
     ["flujo", "0"],
     ["flujo", "--exchanges", "binance"],
+    ["flujo", "--wal-durable", "--escritura-async"],
     ["relojes", "--horas", "0"],
     ["liquidez", "--horas", "0"],
     ["hy", "--paso", "0"],
