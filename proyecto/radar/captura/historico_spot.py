@@ -93,7 +93,8 @@ def descargar_okx(desde, hasta, intervalo_s: int, max_paginas: int, pedir=pedir_
         pagina = interpretar_okx(respuesta, intervalo_s, pd.Timestamp.now(tz="UTC"))
         paginas += 1
         if pagina.empty:
-            alcanzado = True
+            # El agotamiento de la API no demuestra cobertura hasta 'desde'.
+            alcanzado = False
             break
         datos.append(pagina)
         viejo = int(pagina["inicio_utc"].min().timestamp() * 1000)
@@ -116,7 +117,7 @@ def descargar_bitvavo(desde, hasta, intervalo_s: int, max_paginas: int, pedir=pe
     fin = _utc(hasta).floor(f"{intervalo_s}s")
     datos, paginas = [], 0
     while cursor < fin and paginas < max_paginas:
-        siguiente = min(cursor + pd.Timedelta(seconds=intervalo_s * 1440), fin)
+        siguiente = min(cursor + pd.Timedelta(seconds=intervalo_s * 1439), fin)
         respuesta = pedir(BITVAVO_URL, {"interval": INTERVALOS[intervalo_s][1],
                                         "start": int(cursor.timestamp() * 1000),
                                         "end": int(siguiente.timestamp() * 1000), "limit": 1440})
