@@ -52,6 +52,12 @@ class LakeParquet:
         df = pd.DataFrame(filas)
         if df.empty:
             return []
+        # Las salidas de un estudio quedan unidas a su manifiesto de ejecución.
+        # La captura en segundo plano no hereda este contexto.
+        from radar.analisis.trazabilidad import run_id_actual
+        ejecucion = run_id_actual()
+        if ejecucion and "run_id" not in df.columns:
+            df["run_id"] = ejecucion
         if "recibido_utc" not in df.columns:
             raise ValueError("falta recibido_utc")
         try:
