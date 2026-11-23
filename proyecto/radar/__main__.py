@@ -36,6 +36,7 @@
     python -m radar leadlag [--retardos 1,2,3] [--minimo 500] [--no-guardar]
     python -m radar senales [--horizonte 5] [--minimo 500] [--no-guardar]
     python -m radar ofi [--horizontes 1,5,10,30] [--niveles 1,5,10] [--minimo 200] [--no-guardar]
+    python -m radar salud [--umbral-s 180]
     python -m radar catalogo
     python -m radar consultar "SELECT exchange, median(spread_bps) FROM cotizaciones GROUP BY exchange"
 """
@@ -43,6 +44,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 import pandas as pd
@@ -69,6 +71,7 @@ from radar.analisis.retornos import FUENTE_RETORNOS, estudiar_retornos_lake, gua
 from radar.analisis.comparacion_velas import FUENTE_COMPARACION, comparar_velas, guardar_comparacion_velas
 from radar.captura import historico_kraken
 from radar.captura.historico_spot import actualizar_spot
+from radar.salud import diagnosticar
 from radar.captura.exchanges import kraken_historico
 from radar.analisis import prediccion
 from radar.analisis.derivados import FUENTE_ESTUDIO as FUENTE_DERIVADOS
@@ -568,6 +571,13 @@ def cmd_estacionalidad(args):
         print(f"Guardado en el lake: {len(efectos)} conclusiones en '{FUENTE_PERFILES}'.")
 
 
+def cmd_salud(args):
+    resultado = diagnosticar(LakeParquet(), umbral_s=args.umbral_s)
+    print(json.dumps(resultado, ensure_ascii=False, indent=2))
+    if not resultado["ok"]:
+        raise SystemExit(2)
+
+
 def cmd_catalogo(args):
     print(f"Vistas: {LakeParquet().crear_catalogo()} → {CATALOGO}")
 
@@ -757,6 +767,10 @@ def main(argv=None):
     p.add_argument("--banda", type=float, default=10, help="Banda en bps alrededor del mid para la profundidad")
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
     p.set_defaults(func=cmd_estacionalidad)
+    p = sub.add_parser("salud", help="Diagnóstico de frescura de capturas y errores recientes")
+    p.add_argument("--umbral-s", type=float, default=180,
+                   help="Segundos máximos desde la última cotización/libro reconstruido")
+    p.set_defaults(func=cmd_salud)
     sub.add_parser("catalogo", help="Crea data/quantlab.duckdb para DBeaver").set_defaults(func=cmd_catalogo)
     p = sub.add_parser("consultar", help="Ejecuta SQL sobre el lake")
     p.add_argument("sql")
@@ -771,6 +785,8 @@ def main(argv=None):
         parser.error("las horas deben ser positivas")
     if args.comando == "hy" and (args.rango <= 0 or args.paso <= 0 or args.paso > args.rango or args.sustitutos < 19):
         parser.error("rango y paso positivos, paso no mayor que el rango y al menos 19 sustitutos")
+    if args.comando == "salud" and args.umbral_s <= 0:
+        parser.error("el umbral de salud debe ser positivo")
     if args.comando == "historico-spot" and (args.max_paginas < 1 or not args.intervalos
                                                or any(i not in (60, 300, 900, 3600, 14400, 86400)
                                                       for i in args.intervalos)
