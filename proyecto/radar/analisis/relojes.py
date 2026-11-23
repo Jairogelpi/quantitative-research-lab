@@ -309,6 +309,16 @@ def diagnostico_comun(relojes, fuente: str = "eventos_libro") -> str:
 
 
 def guardar_relojes(resultados, almacen, ejecutado_utc: pd.Timestamp) -> list:
-    """Guarda una medición en la fuente `estudios_relojes`; `hasta_utc` dice hasta dónde llegaban los datos."""
-    return almacen.guardar([{"estudio": "relojes", "metodo": METODO, "ejecutado_utc": ejecutado_utc,
-                             "recibido_utc": ejecutado_utc, **r.a_fila()} for r in resultados], FUENTE_RELOJES)
+    """Guarda los instantes con timezone UTC explícita; DuckDB puede devolver timestamps naive."""
+    def utc(valor):
+        ts = pd.Timestamp(valor)
+        return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+
+    filas = []
+    for r in resultados:
+        fila = r.a_fila()
+        fila["desde_utc"] = utc(r.desde_utc)
+        fila["hasta_utc"] = utc(r.hasta_utc)
+        filas.append({"estudio": "relojes", "metodo": METODO, "ejecutado_utc": utc(ejecutado_utc),
+                      "recibido_utc": utc(ejecutado_utc), **fila})
+    return almacen.guardar(filas, FUENTE_RELOJES)
