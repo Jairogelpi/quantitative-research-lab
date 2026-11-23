@@ -197,7 +197,10 @@ async def _capturar(protocolos, c: _Captura, segundos: float, conectar, interval
               for p in protocolos]
     tareas.append(asyncio.create_task(_fotos(c, intervalo_libros, intervalo_volcado, niveles, par)))
     try:
-        await asyncio.sleep(segundos)
+        if segundos is None:
+            await asyncio.Future()  # modo servicio: termina al cancelar o cerrar el proceso
+        else:
+            await asyncio.sleep(segundos)
     finally:
         for t in tareas:
             t.cancel()
@@ -215,7 +218,7 @@ def crear_protocolos(nombres) -> list:
     return [clases[n]() for n in nombres]
 
 
-def capturar_flujo(exchanges, almacen: Almacen, segundos: float, tam_lote: int = TAM_LOTE_FLUJO,
+def capturar_flujo(exchanges, almacen: Almacen, segundos: float | None, tam_lote: int = TAM_LOTE_FLUJO,
                    intervalo_libros: float = INTERVALO_LIBROS_S, intervalo_volcado: float = INTERVALO_VOLCADO_S,
                    niveles_guardados: int = NIVELES_GUARDADOS, par: str = PAR, conectar=_conectar_websocket,
                    espera_mensaje: float = ESPERA_MENSAJE_S, espera_reconexion: float = ESPERA_RECONEXION_S,
