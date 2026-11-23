@@ -8,7 +8,7 @@
                             [--impactos 0,1,5] [--urgencias 1,3] [--urgencia-adaptativa 1]
                             [--intensidades 0.5,1] [--no-guardar]
     python -m radar estacionalidad [--banda 10] [--no-guardar]
-    python -m radar flujo [segundos] [--exchanges kraken,okx,bitvavo]
+    python -m radar flujo [segundos] [--continuo] [--escritura-async] [--exchanges kraken,okx,bitvavo]
     python -m radar markouts [--no-guardar]
     python -m radar liquidez [--horas 6] [--no-guardar]
     python -m radar volatilidad [--no-guardar]
@@ -22,6 +22,7 @@
     python -m radar respuesta [--horas 6] [--no-guardar]
     python -m radar velas [--horas 168] [--intervalos 60,300,3600,86400]
     python -m radar historico-kraken [--archivo RUTA_O_URL ...] [--intervalos-zip 60,1440] [--sin-zip]
+    python -m radar historico-spot [--exchanges okx,bitvavo] [--desde 2026-11-20] [--hasta 2026-11-23] [--max-paginas 30]
     python -m radar comparar-velas [--intervalos 60,300,3600,86400] [--no-guardar]
     python -m radar retornos [--fuente propia|kraken_historico] [--intervalo 3600] [--exchange kraken] [--no-guardar]
     python -m radar prediccion [--fuente kraken_historico] [--intervalos 86400,3600] [--no-guardar]
@@ -35,6 +36,7 @@
     python -m radar leadlag [--retardos 1,2,3] [--minimo 500] [--no-guardar]
     python -m radar senales [--horizonte 5] [--minimo 500] [--no-guardar]
     python -m radar ofi [--horizontes 1,5,10,30] [--niveles 1,5,10] [--minimo 200] [--no-guardar]
+    python -m radar salud [--umbral-s 180]
     python -m radar catalogo
     python -m radar consultar "SELECT exchange, median(spread_bps) FROM cotizaciones GROUP BY exchange"
 """
@@ -42,6 +44,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 import pandas as pd
@@ -67,6 +70,8 @@ from radar.analisis.velas import actualizar_velas
 from radar.analisis.retornos import FUENTE_RETORNOS, estudiar_retornos_lake, guardar_estudio_retornos
 from radar.analisis.comparacion_velas import FUENTE_COMPARACION, comparar_velas, guardar_comparacion_velas
 from radar.captura import historico_kraken
+from radar.captura.historico_spot import actualizar_spot
+from radar.salud import diagnosticar
 from radar.captura.exchanges import kraken_historico
 from radar.analisis import prediccion
 from radar.analisis.derivados import FUENTE_ESTUDIO as FUENTE_DERIVADOS
@@ -102,9 +107,11 @@ def cmd_capturar(args):
 
 def cmd_flujo(args):
     exchanges = args.exchanges.split(",")
-    print(f"Capturando el flujo del libro y los trades por websocket de {', '.join(exchanges)} durante "
-          f"{args.segundos:.0f} s…")
-    resumen = capturar_flujo(exchanges, LakeParquet(), args.segundos)
+    duracion = None if args.continuo else args.segundos
+    periodo = "sin límite horario" if args.continuo else f"durante {args.segundos:.0f} s"
+    print(f"Capturando por websocket de {', '.join(exchanges)} {periodo}…")
+    resumen = capturar_flujo(exchanges, LakeParquet(), duracion,
+                            escritura_en_hilo=args.escritura_async)
     print(f"Terminado: {resumen['eventos_libro']} cambios del libro, {resumen['trades']} trades y {resumen['libros']} "
           f"libros reconstruidos; {resumen['errores']} errores, {resumen['resincronizaciones']} resincronizaciones y "
           f"{resumen['reconexiones']} reconexiones.")
@@ -424,6 +431,18 @@ def cmd_historico_kraken(args):
         print(f"  - {fila}")
 
 
+def cmd_historico_spot(args):
+    resultados = actualizar_spot(LakeParquet(), exchanges=tuple(args.exchanges.split(",")),
+                                  intervalos_s=args.intervalos, desde=args.desde, hasta=args.hasta,
+                                  max_paginas=args.max_paginas)
+    for fila in resultados:
+        print(f"  - {fila}")
+    if any("error" in fila for fila in resultados):
+        raise RuntimeError("Fallaron una o más descargas históricas spot; revisar errores")
+    if any(not fila["ventana_completa"] for fila in resultados):
+        print("AVISO: ventana histórica parcial por límite de páginas. Ampliar --max-paginas.")
+
+
 def cmd_comparar_velas(args):
     lake = LakeParquet()
     if "velas" not in lake.fuentes():
@@ -553,6 +572,13 @@ def cmd_estacionalidad(args):
         print(f"Guardado en el lake: {len(efectos)} conclusiones en '{FUENTE_PERFILES}'.")
 
 
+def cmd_salud(args):
+    resultado = diagnosticar(LakeParquet(), umbral_s=args.umbral_s)
+    print(json.dumps(resultado, ensure_ascii=False, indent=2))
+    if not resultado["ok"]:
+        raise SystemExit(2)
+
+
 def cmd_catalogo(args):
     print(f"Vistas: {LakeParquet().crear_catalogo()} → {CATALOGO}")
 
@@ -576,9 +602,12 @@ def main(argv=None):
                    help="Niveles por lado del libro que se guardan (0 = no guardar libros)")
     p.add_argument("--sin-comparar", action="store_true", help="No guardar comparaciones ni conclusiones")
     p.set_defaults(func=cmd_capturar)
-    p = sub.add_parser("flujo", help="Captura por websocket los cambios del libro (con secuencia y checksum) y los trades")
+    p = sub.add_parser("flujo", help="Captura por websocket los cambios del libro y los trades")
     p.add_argument("segundos", nargs="?", type=float, default=60)
     p.add_argument("--exchanges", type=str, default=",".join(EXCHANGES))
+    p.add_argument("--continuo", action="store_true", help="Sin corte obligatorio cada hora")
+    p.add_argument("--escritura-async", action="store_true",
+                   help="Escritor Parquet en hilo separado con cola limitada (en memoria)")
     p.set_defaults(func=cmd_flujo)
     p = sub.add_parser("costes", help="Coste de una ida y vuelta barriendo el libro y punto de equilibrio, con datos de ahora")
     p.add_argument("--importe", type=float, default=IMPORTE_COMPARACION)
@@ -661,19 +690,27 @@ def main(argv=None):
                    help="Minutos de las velas que se piden a la API (las 720 más recientes), separados por comas")
     p.add_argument("--sin-zip", action="store_true", help="Solo la API (lo reciente), sin el archivo")
     p.set_defaults(func=cmd_historico_kraken)
+    p = sub.add_parser("historico-spot", help="Histórico spot BTC/EUR de OKX y Bitvavo, paginado e idempotente")
+    p.add_argument("--exchanges", default="okx,bitvavo")
+    p.add_argument("--desde", help="Inicio UTC inclusivo, ISO-8601 (por defecto, últimas 24 h)")
+    p.add_argument("--hasta", help="Fin UTC exclusivo, ISO-8601 (por defecto, ahora)")
+    p.add_argument("--intervalos", type=lambda t: tuple(int(x) for x in t.split(",")),
+                   default=(60, 3600, 86400), help="Intervalos en segundos: 60,300,900,3600,14400,86400")
+    p.add_argument("--max-paginas", type=int, default=30, help="Máximo por exchange e intervalo")
+    p.set_defaults(func=cmd_historico_spot)
     p = sub.add_parser("comparar-velas", help="Compara las velas propias con las oficiales de Kraken")
     p.add_argument("--intervalos", type=lambda t: tuple(int(x) for x in t.split(",")), default=(60, 300, 3600, 86400),
                    help="Segundos de las velas que se comparan, separados por comas")
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
     p.set_defaults(func=cmd_comparar_velas)
     p = sub.add_parser("retornos", help="Retornos, volatilidad anualizada, colas, agrupamiento y regímenes")
-    p.add_argument("--fuente", choices=("propia", "kraken_historico"), default="propia")
+    p.add_argument("--fuente", choices=("propia", "kraken_historico", "okx_historico", "bitvavo_historico"), default="propia")
     p.add_argument("--intervalo", type=int, default=None, help="Segundos de vela (por defecto, todos)")
     p.add_argument("--exchange", choices=EXCHANGES, default=None)
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
     p.set_defaults(func=cmd_retornos)
     p = sub.add_parser("prediccion", help="Momentum y reversión con validación purgada y muestra guardada bajo llave")
-    p.add_argument("--fuente", choices=("propia", "kraken_historico"), default=prediccion.FUENTE_POR_DEFECTO)
+    p.add_argument("--fuente", choices=("propia", "kraken_historico", "okx_historico", "bitvavo_historico"), default=prediccion.FUENTE_POR_DEFECTO)
     p.add_argument("--intervalos", type=lambda t: tuple(int(x) for x in t.split(",")),
                    default=prediccion.INTERVALOS_POR_DEFECTO,
                    help="Segundos de vela, separados por comas (otra lista es otra familia, con su propia muestra guardada)")
@@ -733,6 +770,10 @@ def main(argv=None):
     p.add_argument("--banda", type=float, default=10, help="Banda en bps alrededor del mid para la profundidad")
     p.add_argument("--no-guardar", action="store_true", help="Solo mostrar, sin guardar en el lake")
     p.set_defaults(func=cmd_estacionalidad)
+    p = sub.add_parser("salud", help="Diagnóstico de frescura de capturas y errores recientes")
+    p.add_argument("--umbral-s", type=float, default=180,
+                   help="Segundos máximos desde la última cotización/libro reconstruido")
+    p.set_defaults(func=cmd_salud)
     sub.add_parser("catalogo", help="Crea data/quantlab.duckdb para DBeaver").set_defaults(func=cmd_catalogo)
     p = sub.add_parser("consultar", help="Ejecuta SQL sobre el lake")
     p.add_argument("sql")
@@ -747,6 +788,13 @@ def main(argv=None):
         parser.error("las horas deben ser positivas")
     if args.comando == "hy" and (args.rango <= 0 or args.paso <= 0 or args.paso > args.rango or args.sustitutos < 19):
         parser.error("rango y paso positivos, paso no mayor que el rango y al menos 19 sustitutos")
+    if args.comando == "salud" and args.umbral_s <= 0:
+        parser.error("el umbral de salud debe ser positivo")
+    if args.comando == "historico-spot" and (args.max_paginas < 1 or not args.intervalos
+                                               or any(i not in (60, 300, 900, 3600, 14400, 86400)
+                                                      for i in args.intervalos)
+                                               or not set(args.exchanges.split(",")) <= {"okx", "bitvavo"}):
+        parser.error("historico-spot: exchanges, intervalos o máximo de páginas incorrectos")
     if args.comando == "historico-derivados" and args.dias < 1:
         parser.error("los días deben ser al menos 1")
     if args.comando == "opciones" and args.max_tickers != "todos" and (not args.max_tickers.isdigit()

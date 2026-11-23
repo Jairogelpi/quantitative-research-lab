@@ -196,11 +196,21 @@ async def _capturar(protocolos, c: _Captura, segundos: float, conectar, interval
     tareas = [asyncio.create_task(_sesion(p, c, conectar, espera_mensaje, espera_reconexion, espera_max))
               for p in protocolos]
     tareas.append(asyncio.create_task(_fotos(c, intervalo_libros, intervalo_volcado, niveles, par)))
+    # No dejar tareas receptoras muertas silenciosamente: cualquier excepción
+    # inesperada termina el servicio y permite al supervisor reiniciarlo.
+    temporizador = asyncio.create_task(asyncio.sleep(segundos)) if segundos is not None else None
     try:
-        await asyncio.sleep(segundos)
+        pendientes = [*tareas, *([temporizador] if temporizador is not None else [])]
+        terminadas, _ = await asyncio.wait(pendientes, return_when=asyncio.FIRST_COMPLETED)
+        for tarea in terminadas:
+            if tarea is not temporizador:
+                tarea.result()  # propaga el error original
+                raise RuntimeError("Terminó inesperadamente una tarea de captura")
     finally:
-        for t in tareas:
-            t.cancel()
+        if temporizador is not None:
+            temporizador.cancel()
+        for tarea in tareas:
+            tarea.cancel()
         await asyncio.gather(*tareas, return_exceptions=True)
 
 
@@ -215,18 +225,26 @@ def crear_protocolos(nombres) -> list:
     return [clases[n]() for n in nombres]
 
 
-def capturar_flujo(exchanges, almacen: Almacen, segundos: float, tam_lote: int = TAM_LOTE_FLUJO,
+def capturar_flujo(exchanges, almacen: Almacen, segundos: float | None, tam_lote: int = TAM_LOTE_FLUJO,
                    intervalo_libros: float = INTERVALO_LIBROS_S, intervalo_volcado: float = INTERVALO_VOLCADO_S,
                    niveles_guardados: int = NIVELES_GUARDADOS, par: str = PAR, conectar=_conectar_websocket,
                    espera_mensaje: float = ESPERA_MENSAJE_S, espera_reconexion: float = ESPERA_RECONEXION_S,
-                   espera_max: float = ESPERA_MAX_RECONEXION_S, reloj=ahora_utc) -> dict:
+                   espera_max: float = ESPERA_MAX_RECONEXION_S, reloj=ahora_utc,
+                   escritura_en_hilo: bool = False) -> dict:
     """Captura `segundos` de flujo de los `exchanges` (nombres o protocolos) y lo guarda en `almacen`.
     Devuelve un resumen con lo guardado y las incidencias."""
     protocolos = [crear_protocolos([e])[0] if isinstance(e, str) else e for e in exchanges]
-    c = _Captura(almacen, tam_lote, reloj)
+    from radar.almacen.cola import ColaEscritura
+
+    escritor = ColaEscritura(almacen) if escritura_en_hilo else almacen
+    c = _Captura(escritor, tam_lote, reloj)
     try:
         asyncio.run(_capturar(protocolos, c, segundos, conectar, intervalo_libros, intervalo_volcado,
                               niveles_guardados, par, espera_mensaje, espera_reconexion, espera_max))
     finally:
-        c.volcar()
+        try:
+            c.volcar()
+        finally:
+            if escritura_en_hilo:
+                escritor.cerrar()
     return dict(c.cuenta)
