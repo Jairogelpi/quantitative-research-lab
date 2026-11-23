@@ -153,3 +153,15 @@ def test_filas_de_ronda_guarda_los_libros_si_se_pide():
     assert FUENTE_LIBROS not in filas_de_ronda(4, libros, errores)
     filas = filas_de_ronda(4, libros, errores, niveles_guardados=50)[FUENTE_LIBROS]
     assert [(f["exchange"], f["ronda"], f["bid_precios"]) for f in filas] == [("kraken", 4, [60000.0])]
+
+
+def test_captura_rest_incluye_id_unico_por_ejecucion():
+    tiempo = itertools.count(0, 1)
+    almacen = Memoria()
+    capturar(FUENTES[:1], almacen, segundos=6, tam_lote=2,
+             reloj=reloj_falso(), dormir=lambda _: None,
+             monotonic=lambda: next(tiempo))
+    filas = [fila for _, lote in almacen.lotes for fila in lote]
+    ids = {fila["captura_id"] for fila in filas}
+    assert len(ids) == 1
+    assert len(next(iter(ids))) == 32
