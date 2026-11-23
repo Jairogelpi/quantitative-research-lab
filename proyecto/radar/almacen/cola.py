@@ -23,6 +23,7 @@ class ColaEscritura:
         self.pendientes: deque[Future] = deque()
         self.ejecutor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="quantlab-parquet")
         self.cerrada = False
+        self.fallo = None
 
     def _escribir(self, filas, fuente):
         for intento in range(self.reintentos + 1):
@@ -33,9 +34,18 @@ class ColaEscritura:
                     raise
                 time.sleep(self.pausa_s * 2 ** intento)
 
+    def _resultado(self, futuro):
+        try:
+            return futuro.result()
+        except Exception as exc:
+            self.fallo = self.fallo or exc
+            raise
+
     def _comprobar(self, esperar=False):
+        if self.fallo is not None:
+            raise RuntimeError("Falló el escritor Parquet") from self.fallo
         while self.pendientes and (esperar or self.pendientes[0].done()):
-            self.pendientes.popleft().result()
+            self._resultado(self.pendientes.popleft())
 
     def guardar(self, filas, fuente):
         if self.cerrada:
@@ -46,7 +56,7 @@ class ColaEscritura:
         # Cuando el disco no da abasto, se aplica backpressure en vez de crecer
         # indefinidamente en memoria. Esto debe vigilarse con métricas.
         while len(self.pendientes) >= self.max_pendientes:
-            self.pendientes.popleft().result()
+            self._resultado(self.pendientes.popleft())
         self.pendientes.append(self.ejecutor.submit(self._escribir, list(filas), fuente))
         return []  # las rutas físicas se conocen al completar el trabajo
 
@@ -66,6 +76,8 @@ class ColaEscritura:
             self.ejecutor.shutdown(wait=True)
         if primero is not None:
             raise primero
+        if self.fallo is not None:
+            raise RuntimeError("Falló un lote de escritura anterior") from self.fallo
 
     def __enter__(self):
         return self
