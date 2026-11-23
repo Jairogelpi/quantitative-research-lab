@@ -12,7 +12,7 @@ $raiz = Split-Path -Parent $PSScriptRoot
 $proyecto = Join-Path $raiz "proyecto"
 $logs = Join-Path $raiz "data\logs"
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
-$argumentos = if ($Modo -eq "rest") { @("capturar", "$Segundos") } else { @("flujo", "--continuo") }
+$argumentos = if ($Modo -eq "rest") { @("capturar", "$Segundos") } else { @("flujo", "--continuo", "--escritura-async") }
 $env:PYTHONIOENCODING = "utf-8"
 
 while ($true) {
