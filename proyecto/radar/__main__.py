@@ -37,6 +37,8 @@
     python -m radar senales [--horizonte 5] [--minimo 500] [--no-guardar]
     python -m radar ofi [--horizontes 1,5,10,30] [--niveles 1,5,10] [--minimo 200] [--no-guardar]
     python -m radar salud [--umbral-s 180]
+    python -m radar auditar-lake [--profundo]
+    python -m radar continuidad [--horas 24] [--umbral-s 5]
     python -m radar catalogo
     python -m radar consultar "SELECT exchange, median(spread_bps) FROM cotizaciones GROUP BY exchange"
 """
@@ -72,6 +74,9 @@ from radar.analisis.comparacion_velas import FUENTE_COMPARACION, comparar_velas,
 from radar.captura import historico_kraken
 from radar.captura.historico_spot import actualizar_spot
 from radar.salud import diagnosticar
+from radar.almacen.auditoria import auditar_lake
+from radar.analisis.continuidad import diagnosticar_continuidad
+from radar.analisis.trazabilidad import registrar_estudio
 from radar.captura.exchanges import kraken_historico
 from radar.analisis import prediccion
 from radar.analisis.derivados import FUENTE_ESTUDIO as FUENTE_DERIVADOS
@@ -580,6 +585,22 @@ def cmd_salud(args):
         raise SystemExit(2)
 
 
+def cmd_auditar_lake(args):
+    reporte = auditar_lake(LakeParquet().raiz, profundo=args.profundo)
+    print(json.dumps(reporte, indent=2, ensure_ascii=False, default=str))
+    if not reporte["ok"]:
+        raise SystemExit(2)
+
+
+def cmd_continuidad(args):
+    fin = pd.Timestamp.now(tz="UTC")
+    desde = fin - pd.Timedelta(hours=args.horas)
+    reporte = diagnosticar_continuidad(LakeParquet(), desde, fin, args.umbral_s)
+    print(json.dumps(reporte, indent=2, ensure_ascii=False, default=str))
+    if not reporte["ok"]:
+        raise SystemExit(2)
+
+
 def cmd_catalogo(args):
     print(f"Vistas: {LakeParquet().crear_catalogo()} → {CATALOGO}")
 
@@ -778,6 +799,13 @@ def main(argv=None):
     p.add_argument("--umbral-s", type=float, default=180,
                    help="Segundos máximos desde la última cotización/libro reconstruido")
     p.set_defaults(func=cmd_salud)
+    p = sub.add_parser("auditar-lake", help="Inspección no destructiva de archivos Parquet y particiones UTC")
+    p.add_argument("--profundo", action="store_true", help="Inspeccionar todas las fechas de cada fila")
+    p.set_defaults(func=cmd_auditar_lake)
+    p = sub.add_parser("continuidad", help="Detectar cortes REST y WebSocket, incluidos los de otras sesiones")
+    p.add_argument("--horas", type=float, default=24)
+    p.add_argument("--umbral-s", type=float, default=5)
+    p.set_defaults(func=cmd_continuidad)
     sub.add_parser("catalogo", help="Crea data/quantlab.duckdb para DBeaver").set_defaults(func=cmd_catalogo)
     p = sub.add_parser("consultar", help="Ejecuta SQL sobre el lake")
     p.add_argument("sql")
@@ -792,6 +820,8 @@ def main(argv=None):
         parser.error("las horas deben ser positivas")
     if args.comando == "hy" and (args.rango <= 0 or args.paso <= 0 or args.paso > args.rango or args.sustitutos < 19):
         parser.error("rango y paso positivos, paso no mayor que el rango y al menos 19 sustitutos")
+    if args.comando == "continuidad" and (args.horas <= 0 or args.umbral_s <= 0):
+        parser.error("continuidad: horas y umbral deben ser positivos")
     if args.comando == "salud" and args.umbral_s <= 0:
         parser.error("el umbral de salud debe ser positivo")
     if args.comando == "historico-spot" and (args.max_paginas < 1 or not args.intervalos
@@ -832,7 +862,13 @@ def main(argv=None):
                                       or min(args.impactos) < 0 or min(args.urgencias, default=0) < 0
                                       or args.urgencia_adaptativa < 0 or min(args.intensidades, default=0) < 0):
         parser.error("importe y duración positivos, al menos 1 trozo, e impactos, urgencias e intensidades no negativos")
-    args.func(args)
+    if args.comando in {"capturar", "flujo", "consultar", "catalogo", "salud",
+                        "auditar-lake", "continuidad"} or getattr(args, "no_guardar", False):
+        args.func(args)
+    else:
+        parametros = {k: v for k, v in vars(args).items() if k != "func"}
+        with registrar_estudio(args.comando, parametros):
+            args.func(args)
 
 
 if __name__ == "__main__":
