@@ -11,12 +11,19 @@ import json
 import os
 import subprocess
 import uuid
+from contextvars import ContextVar
 from contextlib import contextmanager
 from pathlib import Path
 
 import pandas as pd
 
 from radar.configuracion import RAIZ_LAKE, RAIZ_PROYECTO
+
+RUN_ACTUAL = ContextVar('quantlab_run_actual', default=None)
+
+
+def run_id_actual():
+    return RUN_ACTUAL.get()
 
 
 def manifiesto_datos(raiz=RAIZ_LAKE) -> dict:
@@ -50,6 +57,7 @@ def registrar_estudio(comando: str, parametros: dict, raiz_lake=RAIZ_LAKE, raiz_
     inicio = pd.Timestamp.now(tz="UTC")
     antes = manifiesto_datos(raiz_lake)
     estado, error = "correcto", None
+    token = RUN_ACTUAL.set(identificador)
     try:
         yield identificador
     except BaseException as exc:
@@ -57,6 +65,7 @@ def registrar_estudio(comando: str, parametros: dict, raiz_lake=RAIZ_LAKE, raiz_
         error = f"{type(exc).__name__}: {exc}"
         raise
     finally:
+        RUN_ACTUAL.reset(token)
         despues = manifiesto_datos(raiz_lake)
         fila = {
             "run_id": identificador, "comando": comando, "parametros": parametros,
