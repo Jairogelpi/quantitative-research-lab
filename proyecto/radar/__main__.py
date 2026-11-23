@@ -8,7 +8,7 @@
                             [--impactos 0,1,5] [--urgencias 1,3] [--urgencia-adaptativa 1]
                             [--intensidades 0.5,1] [--no-guardar]
     python -m radar estacionalidad [--banda 10] [--no-guardar]
-    python -m radar flujo [segundos] [--continuo] [--escritura-async] [--exchanges kraken,okx,bitvavo]
+    python -m radar flujo [segundos] [--continuo] [--wal-durable|--escritura-async] [--exchanges kraken,okx,bitvavo]
     python -m radar markouts [--no-guardar]
     python -m radar liquidez [--horas 6] [--no-guardar]
     python -m radar volatilidad [--no-guardar]
@@ -111,7 +111,8 @@ def cmd_flujo(args):
     periodo = "sin límite horario" if args.continuo else f"durante {args.segundos:.0f} s"
     print(f"Capturando por websocket de {', '.join(exchanges)} {periodo}…")
     resumen = capturar_flujo(exchanges, LakeParquet(), duracion,
-                            escritura_en_hilo=args.escritura_async)
+                            escritura_en_hilo=args.escritura_async,
+                            escritura_durable=args.wal_durable)
     print(f"Terminado: {resumen['eventos_libro']} cambios del libro, {resumen['trades']} trades y {resumen['libros']} "
           f"libros reconstruidos; {resumen['errores']} errores, {resumen['resincronizaciones']} resincronizaciones y "
           f"{resumen['reconexiones']} reconexiones.")
@@ -606,8 +607,11 @@ def main(argv=None):
     p.add_argument("segundos", nargs="?", type=float, default=60)
     p.add_argument("--exchanges", type=str, default=",".join(EXCHANGES))
     p.add_argument("--continuo", action="store_true", help="Sin corte obligatorio cada hora")
-    p.add_argument("--escritura-async", action="store_true",
-                   help="Escritor Parquet en hilo separado con cola limitada (en memoria)")
+    persistencia = p.add_mutually_exclusive_group()
+    persistencia.add_argument("--escritura-async", action="store_true",
+                             help="Cola de escritura en memoria (no recuperable tras apagón)")
+    persistencia.add_argument("--wal-durable", action="store_true",
+                             help="SQLite WAL con lotes recuperables al reiniciar")
     p.set_defaults(func=cmd_flujo)
     p = sub.add_parser("costes", help="Coste de una ida y vuelta barriendo el libro y punto de equilibrio, con datos de ahora")
     p.add_argument("--importe", type=float, default=IMPORTE_COMPARACION)
