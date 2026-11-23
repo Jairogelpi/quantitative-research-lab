@@ -243,13 +243,22 @@ def capturar_flujo(exchanges, almacen: Almacen, segundos: float | None, tam_lote
                    niveles_guardados: int = NIVELES_GUARDADOS, par: str = PAR, conectar=_conectar_websocket,
                    espera_mensaje: float = ESPERA_MENSAJE_S, espera_reconexion: float = ESPERA_RECONEXION_S,
                    espera_max: float = ESPERA_MAX_RECONEXION_S, reloj=ahora_utc,
-                   escritura_en_hilo: bool = False) -> dict:
+                   escritura_en_hilo: bool = False, escritura_durable: bool = False,
+                   ruta_wal=None) -> dict:
     """Captura `segundos` de flujo de los `exchanges` (nombres o protocolos) y lo guarda en `almacen`.
     Devuelve un resumen con lo guardado y las incidencias."""
     protocolos = [crear_protocolos([e])[0] if isinstance(e, str) else e for e in exchanges]
     from radar.almacen.cola import ColaEscritura
 
-    escritor = ColaEscritura(almacen) if escritura_en_hilo else almacen
+    if escritura_en_hilo and escritura_durable:
+        raise ValueError("Use solamente una modalidad de escritura asíncrona")
+    if escritura_durable:
+        from pathlib import Path
+        from radar.almacen.durable import AlmacenDurable
+        ruta = Path(ruta_wal) if ruta_wal is not None else almacen.raiz.parent / "wal" / "flujo.sqlite"
+        escritor = AlmacenDurable(almacen, ruta)
+    else:
+        escritor = ColaEscritura(almacen) if escritura_en_hilo else almacen
     c = _Captura(escritor, tam_lote, reloj)
     try:
         asyncio.run(_capturar(protocolos, c, segundos, conectar, intervalo_libros, intervalo_volcado,
@@ -258,6 +267,6 @@ def capturar_flujo(exchanges, almacen: Almacen, segundos: float | None, tam_lote
         try:
             c.volcar()
         finally:
-            if escritura_en_hilo:
+            if escritura_en_hilo or escritura_durable:
                 escritor.cerrar()
     return dict(c.cuenta)
