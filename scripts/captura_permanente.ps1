@@ -8,6 +8,13 @@ param(
     [int]$Segundos = 3600
 )
 
+if (-not (Test-Path -LiteralPath $Python)) {
+    $alternativo = Get-Command "python" -ErrorAction SilentlyContinue
+    if (-not $alternativo) {
+        throw "Python no está en $Python ni disponible en PATH. Indica -Python con la ruta correcta."
+    }
+    $Python = $alternativo.Source
+}
 $raiz = Split-Path -Parent $PSScriptRoot
 $proyecto = Join-Path $raiz "proyecto"
 $logs = Join-Path $raiz "data\logs"
