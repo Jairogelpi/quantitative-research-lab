@@ -21,6 +21,7 @@ Fuentes que escribe en el almacén: `cotizaciones`, `comparaciones` (una fila po
 from __future__ import annotations
 
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
@@ -92,6 +93,7 @@ def capturar(fuentes, almacen: Almacen, segundos: float, intervalo: float = INTE
              niveles: int = NIVELES_LIBRO, bandas_bps=(), niveles_guardados: int = 0, reloj=ahora_utc, dormir=time.sleep, monotonic=time.monotonic) -> dict:
     """Una ronda cada `intervalo` segundos durante `segundos`; guarda en lotes. Devuelve un resumen."""
     lotes: dict[str, list] = {}
+    captura_id = uuid.uuid4().hex  # identifica una ejecución REST; 'ronda' vuelve a cero tras reiniciar
     rondas, n_errores, fin = 0, 0, monotonic() + segundos
 
     def volcar():
@@ -105,7 +107,7 @@ def capturar(fuentes, almacen: Almacen, segundos: float, intervalo: float = INTE
             libros, errores = ronda(fuentes, rondas, hilos, reloj, niveles)
             for fuente, filas in filas_de_ronda(rondas, libros, errores, importe_eur, comisiones, bandas_bps,
                                                    niveles_guardados).items():
-                lotes.setdefault(fuente, []).extend(filas)
+                lotes.setdefault(fuente, []).extend([{**fila, "captura_id": captura_id} for fila in filas])
             n_errores += len(errores)
             rondas += 1
             if len(lotes.get(FUENTE_COTIZACIONES, [])) >= tam_lote:
